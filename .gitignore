@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+
+# Локальные настройки и сессии тут не хранятся (они в ~/.config/platform-mcp),
+# но на случай запуска из каталога проекта.
+.env
+.env.*
+!.env.example
+*.local.json
+
+.idea/
+.vscode/
+.DS_Store
