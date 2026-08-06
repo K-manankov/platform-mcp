@@ -1,0 +1,17 @@
+{
+  "skill_name": "sonar-platform-onboarding",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Нужно завести новый сервис billing-api под проектом payments на sonar-prod. Что мне для этого нужно сделать, с чего начать?",
+      "expected_output": "Explains the two-step GitLab-only contract (create k8s-projects/payments subgroup with member roles, add a repo with a deploy/ directory at its root), that no changes to the infra repo are needed, that onboarding is picked up automatically on a ~3 minute scan (creating an AppProject, Vault access, and an Argo CD Application named payments-<repo> with an auto-created namespace), and how to verify it worked via argocd_exec (app list / app get / proj get). Should not suggest manually applying kubectl manifests or copying examples/*.yaml into the infra repo.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I just created the GitLab subgroup k8s-projects/search and pushed a deploy repo with a deploy/ folder at the root, but I don't see anything show up in Argo CD yet. Is that expected or did I mess something up?",
+      "expected_output": "Explains the ~3 minute discovery scan (so a short wait is expected), gives argocd_exec commands to check (app list -o json, app get, proj get), and lists likely real misconfigurations if it still doesn't show up after several minutes (deploy/ not at repo root, repo not directly under the k8s-projects/search subgroup). Should not tell the user to manually apply an Application or AppProject manifest themselves.",
+      "files": []
+    }
+  ]
+}

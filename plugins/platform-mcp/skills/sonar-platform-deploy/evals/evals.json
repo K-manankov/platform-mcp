@@ -1,0 +1,17 @@
+{
+  "skill_name": "sonar-platform-deploy",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Смержил MR в deploy-репозиторий проекта payments, хочу задеплоить прямо сейчас, не ждать автосинк. Как заставить Argo CD засинкать немедленно?",
+      "expected_output": "Explains merging the MR is the deploy trigger itself, then gives the exact argocd_exec command to force an immediate sync (app sync <project>-<repo>), notes this is a mutating command needing user confirmation, and mentions checking status first/after with app get. Should not suggest kubectl apply or a separate CI/CD deploy pipeline that doesn't exist on this platform.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "How do I roll back the payments-billing-api app to the previous version? Last deploy broke prod and I need this reverted fast.",
+      "expected_output": "Gives argocd_exec app history <app> to find a target revision and argocd_exec app rollback <app> <id> to roll back, notes it's a mutating/confirmable operation, and correctly uses the fixed <project>-<repo> naming convention (payments-billing-api). Bonus if it also mentions this is a stopgap and reverting the merge in Git is the durable fix since GitOps will otherwise drift back on the next sync.",
+      "files": []
+    }
+  ]
+}
