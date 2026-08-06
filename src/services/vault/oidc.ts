@@ -15,22 +15,33 @@ import { awaitCallback, randomToken } from '../../auth/loopback.js';
 export const CALLBACK_PORT = 8250;
 export const CALLBACK_PATH = '/oidc/callback';
 
-export interface VaultAuth {
+export interface VaultIdentity {
+  username?: string;
+  role?: string;
+  policies?: string[];
+}
+
+export interface VaultAuth extends VaultIdentity {
   token: string;
   /** epoch ms, посчитанный из lease_duration. */
   expiresAt: number;
   renewable: boolean;
-  username?: string;
+}
+
+interface VaultAuthPayload {
+  client_token?: string;
+  lease_duration?: number;
+  renewable?: boolean;
+  display_name?: string;
+  metadata?: Record<string, string>;
+  policies?: string[];
+  token_policies?: string[];
+  identity_policies?: string[];
 }
 
 interface VaultResponse {
-  data?: { auth_url?: string };
-  auth?: {
-    client_token?: string;
-    lease_duration?: number;
-    renewable?: boolean;
-    metadata?: Record<string, string>;
-  };
+  data?: Record<string, unknown> & { auth_url?: string };
+  auth?: VaultAuthPayload;
   errors?: string[];
 }
 
@@ -77,6 +88,63 @@ const request = async (
     throw new Error(`${what} не удался (HTTP ${res.status}${detail}).`);
   }
   return body;
+};
+
+const unique = (values: string[]): string[] => [...new Set(values.filter(Boolean))];
+
+/**
+ * Имя пользователя: metadata.username → display_name без префикса oidc- → role.
+ * Role отдельно: иначе auth_status показывает «default» как будто это человек.
+ */
+export const identityFromAuth = (auth: VaultAuthPayload): VaultIdentity => {
+  const role = auth.metadata?.role;
+  const displayName = auth.display_name;
+  const username =
+    auth.metadata?.username ||
+    (displayName ? displayName.replace(/^oidc-/i, '') : undefined) ||
+    role;
+  const policies = unique([
+    ...(auth.policies ?? []),
+    ...(auth.token_policies ?? []),
+    ...(auth.identity_policies ?? [])
+  ]);
+  return {
+    username,
+    role,
+    policies: policies.length > 0 ? policies : undefined
+  };
+};
+
+/** Ответ auth/token/lookup-self: identity лежит в data, meta.role вместо metadata. */
+export const identityFromLookup = (data: Record<string, unknown>): VaultIdentity => {
+  const meta = data.meta;
+  const role =
+    meta && typeof meta === 'object' && meta !== null && 'role' in meta
+      ? String((meta as { role?: unknown }).role ?? '')
+      : undefined;
+  const displayName = typeof data.display_name === 'string' ? data.display_name : undefined;
+  const asList = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+  const policies = unique([
+    ...asList(data.policies),
+    ...asList(data.token_policies),
+    ...asList(data.identity_policies)
+  ]);
+
+  return {
+    username:
+      (typeof data.meta === 'object' &&
+      data.meta !== null &&
+      typeof (data.meta as { username?: unknown }).username === 'string'
+        ? (data.meta as { username: string }).username
+        : undefined) ||
+      (displayName ? displayName.replace(/^oidc-/i, '') : undefined) ||
+      role ||
+      undefined,
+    role: role || undefined,
+    policies: policies.length > 0 ? policies : undefined
+  };
 };
 
 export interface VaultOidcConfig {
@@ -150,7 +218,7 @@ export const login = async (
     // lease_duration — в секундах от «сейчас»; абсолютного времени Vault не даёт.
     expiresAt: Date.now() + (auth.lease_duration ?? 0) * 1000,
     renewable: auth.renewable === true,
-    username: auth.metadata?.username ?? auth.metadata?.role
+    ...identityFromAuth(auth)
   };
 };
 
@@ -173,6 +241,20 @@ export const renew = async (config: { url: string }, token: string): Promise<Vau
     token: auth.client_token,
     expiresAt: Date.now() + (auth.lease_duration ?? 0) * 1000,
     renewable: auth.renewable === true,
-    username: auth.metadata?.username
+    ...identityFromAuth(auth)
   };
+};
+
+/** Self-introspection без CLI: для обогащения auth_status у старых сессий. */
+export const lookupSelf = async (
+  config: { url: string },
+  token: string
+): Promise<VaultIdentity> => {
+  const body = await request(`${config.url}/v1/auth/token/lookup-self`, 'lookup-self', {
+    headers: { 'x-vault-token': token }
+  });
+  if (!body.data || typeof body.data !== 'object') {
+    throw new Error('Vault не вернул data в lookup-self.');
+  }
+  return identityFromLookup(body.data);
 };

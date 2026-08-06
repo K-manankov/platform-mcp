@@ -56,12 +56,26 @@ const READ_VERBS: Record<ServiceName, Set<string>> = {
     'list',
     'get',
     'lookup',
+    'lookup-self',
     'status',
     'version',
     'capabilities',
+    'capabilities-self',
     'subkeys',
     'metadata'
   ])
+};
+
+/**
+ * Агенты путают HTTP API (`lookup-self`) с CLI. Канон Vault CLI:
+ * `vault token lookup` без аргумента = self.
+ */
+export const normalizeVaultArgs = (args: string[]): string[] => {
+  const words = leadingWords(args);
+  if (words[0] === 'token' && words[1] === 'lookup-self') {
+    return args.map((token) => (token === 'lookup-self' ? 'lookup' : token));
+  }
+  return args;
 };
 
 const MUTATING_VERBS: Record<ServiceName, Set<string>> = {
@@ -244,10 +258,20 @@ const secretOutputLeak = (args: string[], policy: PolicyConfig): string | undefi
   return undefined;
 };
 
+/** Hyphenated self-verbs (`lookup-self`) считаются семейством базового глагола. */
+const readVerbMatch = (service: ServiceName, word: string): boolean => {
+  if (READ_VERBS[service].has(word)) return true;
+  if (word.endsWith('-self')) {
+    const base = word.slice(0, -'-self'.length);
+    return base.length > 0 && READ_VERBS[service].has(base);
+  }
+  return false;
+};
+
 export const isReadOnly = (service: ServiceName, args: string[]): boolean => {
   const words = leadingWords(args);
   if (words.some((word) => MUTATING_VERBS[service].has(word))) return false;
-  return words.some((word) => READ_VERBS[service].has(word));
+  return words.some((word) => readVerbMatch(service, word));
 };
 
 export const evaluate = (
@@ -259,7 +283,9 @@ export const evaluate = (
     return { kind: 'deny', reason: 'Пустой список аргументов: нечего выполнять.' };
   }
 
-  const words = leadingWords(args);
+  // Нормализация до классификации: иначе lookup-self уйдёт в confirm и в CLI usage.
+  const normalized = service === 'vault' ? normalizeVaultArgs(args) : args;
+  const words = leadingWords(normalized);
 
   for (const { path, reason } of DENIED_COMMANDS[service]) {
     if (startsWithPath(words, path)) {
@@ -297,14 +323,14 @@ export const evaluate = (
       };
     }
 
-    const leak = secretOutputLeak(args, policy);
+    const leak = secretOutputLeak(normalized, policy);
     if (leak) return { kind: 'deny', reason: leak };
   }
 
-  if (isReadOnly(service, args)) return { kind: 'allow' };
+  if (isReadOnly(service, normalized)) return { kind: 'allow' };
 
   if (service === 'argocd') {
-    const application = policy.denyApplications.find((name) => args.includes(name));
+    const application = policy.denyApplications.find((name) => normalized.includes(name));
     if (application) {
       return {
         kind: 'deny',
@@ -317,5 +343,5 @@ export const evaluate = (
 
   if (!policy.requireConfirmation) return { kind: 'allow' };
 
-  return { kind: 'confirm', summary: describe(service, args) };
+  return { kind: 'confirm', summary: describe(service, normalized) };
 };

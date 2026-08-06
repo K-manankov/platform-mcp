@@ -9,7 +9,7 @@ import {
 
 import type { AppConfig } from './config.js';
 import { ConfirmationStore } from './policy/confirm.js';
-import { evaluate } from './policy/gate.js';
+import { evaluate, normalizeVaultArgs } from './policy/gate.js';
 import { AuthRequiredError, type ServiceModule, type ServiceName } from './services/types.js';
 
 /** Имя аргумента с токеном подтверждения. Двойное подчёркивание — чтобы не пересечься с полями CLI. */
@@ -97,7 +97,10 @@ export class PlatformMcpServer {
       },
       {
         name: `${service.name}_auth_status`,
-        description: `Кто вошёл в ${service.title} и до какого момента действует токен.`,
+        description:
+          service.name === 'vault'
+            ? 'Кто вошёл в Vault: username, role, policies, expiresAt. Начинайте с этого перед KV и sys/*.'
+            : `Кто вошёл в ${service.title} и до какого момента действует токен.`,
         inputSchema: { type: 'object', properties: {} }
       },
       {
@@ -122,7 +125,7 @@ export class PlatformMcpServer {
       try {
         switch (match[2]) {
           case 'auth_status':
-            return this.handleStatus(service);
+            return await this.handleStatus(service);
           case 'logout':
             service.logout();
             this.pendingLogins.delete(service.name);
@@ -139,8 +142,8 @@ export class PlatformMcpServer {
     });
   }
 
-  private handleStatus(service: ServiceModule): CallToolResult {
-    const status = service.status();
+  private async handleStatus(service: ServiceModule): Promise<CallToolResult> {
+    const status = await service.status();
     const pending = this.pendingLogins.get(service.name);
     return text(
       JSON.stringify(
@@ -221,16 +224,18 @@ export class PlatformMcpServer {
     if (!Array.isArray(args) || args.some((item) => typeof item !== 'string')) {
       return fail('Аргумент args обязателен и должен быть массивом строк.');
     }
-    const argv = args as string[];
 
     // Авторизация проверяется до политики: «нужно войти» — более полезный
     // ответ, чем «операция запрещена», когда верны обе причины.
-    const status = service.status();
+    const status = await service.status();
     if (!status.authenticated) {
       return fail(
         `${status.reason ?? `Нет сессии ${service.title}.`} Вызовите инструмент ${service.name}_login.`
       );
     }
+
+    const argv =
+      service.name === 'vault' ? normalizeVaultArgs(args as string[]) : (args as string[]);
 
     const decision = evaluate(service.name, argv, this.config.policy);
     if (decision.kind === 'deny') return fail(decision.reason);

@@ -11,6 +11,10 @@ export class AuthRequiredError extends Error {
 export interface AuthStatus {
   authenticated: boolean;
   username?: string;
+  /** OIDC role (у Vault часто `default`) — не путать с username. */
+  role?: string;
+  /** Политики токена (token + identity). Только Vault. */
+  policies?: string[];
   expiresAt?: string;
   reason?: string;
 }
@@ -32,7 +36,8 @@ export interface ServiceModule {
   readonly title: string;
   /** Адрес, с которым работает сервис. */
   readonly url: string;
-  status(): AuthStatus;
+  /** Может быть async (Vault при необходимости дергает lookup-self). */
+  status(): AuthStatus | Promise<AuthStatus>;
   login(options: LoginOptions): Promise<AuthStatus>;
   logout(): void;
   /** Выполняет команду CLI. Авторизацию и политику проверяет вызывающая сторона. */

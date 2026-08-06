@@ -1,7 +1,7 @@
 import type { ServiceConfig } from '../../config.js';
 import { clearSession, loadSession, saveSession, type StoredSession } from '../../auth/store.js';
 import { AuthRequiredError, type AuthStatus, type LoginOptions } from '../types.js';
-import { login, renew, type VaultOidcConfig } from './oidc.js';
+import { login, lookupSelf, renew, type VaultOidcConfig } from './oidc.js';
 
 /** Продлеваем заранее: иначе запрос может уйти с токеном, протухшим в полёте. */
 const RENEW_MARGIN_MS = 60_000;
@@ -9,6 +9,8 @@ const RENEW_MARGIN_MS = 60_000;
 export class VaultSession {
   /** single-flight: параллельные вызовы инструментов не должны продлевать токен наперегонки */
   private renewing?: Promise<string>;
+  /** Не дёргать lookup-self повторно, если уже пробовали и не вышло. */
+  private enrichFailed = false;
 
   constructor(
     private readonly config: ServiceConfig,
@@ -23,23 +25,43 @@ export class VaultSession {
     return session;
   }
 
-  status(): AuthStatus {
+  private toStatus(session: StoredSession, authenticated: boolean, reason?: string): AuthStatus {
+    return {
+      authenticated,
+      username: session.username,
+      role: session.role,
+      policies: session.policies,
+      expiresAt: authenticated ? new Date(session.expiresAt).toISOString() : undefined,
+      reason
+    };
+  }
+
+  async status(): Promise<AuthStatus> {
     const session = this.read();
     // Причина описывает только факт: призыв «вызовите vault_login» добавляет
     // тот, кто показывает ошибку, иначе он задваивается в сообщении.
     if (!session) return { authenticated: false, reason: 'Сессии Vault нет.' };
     if (session.expiresAt <= Date.now()) {
-      return {
-        authenticated: false,
-        username: session.username,
-        reason: 'Токен Vault истёк.'
-      };
+      return this.toStatus(session, false, 'Токен Vault истёк.');
     }
-    return {
-      authenticated: true,
-      username: session.username,
-      expiresAt: new Date(session.expiresAt).toISOString()
-    };
+
+    if (!session.policies && !this.enrichFailed) {
+      try {
+        const identity = await lookupSelf({ url: this.config.url }, session.token);
+        const updated: StoredSession = {
+          ...session,
+          username: identity.username ?? session.username,
+          role: identity.role ?? session.role,
+          policies: identity.policies
+        };
+        saveSession(this.config.sessionPath, updated);
+        return this.toStatus(updated, true);
+      } catch {
+        this.enrichFailed = true;
+      }
+    }
+
+    return this.toStatus(session, true);
   }
 
   async getToken(): Promise<string> {
@@ -81,7 +103,10 @@ export class VaultSession {
       ...session,
       token: renewed.token,
       expiresAt: renewed.expiresAt,
-      renewable: renewed.renewable
+      renewable: renewed.renewable,
+      username: renewed.username ?? session.username,
+      role: renewed.role ?? session.role,
+      policies: renewed.policies ?? session.policies
     };
     saveSession(this.config.sessionPath, updated);
     return updated.token;
@@ -89,13 +114,16 @@ export class VaultSession {
 
   async login(opts: LoginOptions): Promise<AuthStatus> {
     const auth = await login({ url: this.config.url, ...this.oidc }, opts);
+    this.enrichFailed = false;
 
     saveSession(this.config.sessionPath, {
       url: this.config.url,
       token: auth.token,
       expiresAt: auth.expiresAt,
       renewable: auth.renewable,
-      username: auth.username
+      username: auth.username,
+      role: auth.role,
+      policies: auth.policies
     });
 
     if (!auth.renewable) {
@@ -107,6 +135,7 @@ export class VaultSession {
   }
 
   logout(): void {
+    this.enrichFailed = false;
     clearSession(this.config.sessionPath);
   }
 }

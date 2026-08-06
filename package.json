@@ -1,6 +1,6 @@
 {
   "name": "@sonar/platform-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "MCP-сервер для инфраструктурных сервисов (Argo CD, Vault) с входом через GitLab SSO",
   "type": "module",
   "bin": {

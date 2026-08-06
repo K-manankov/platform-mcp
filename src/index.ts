@@ -74,8 +74,11 @@ const main = async (): Promise<void> => {
     }
 
     case 'status': {
+      const targets = selected(services, rest);
       const report = Object.fromEntries(
-        selected(services, rest).map((service) => [service.name, service.status()])
+        await Promise.all(
+          targets.map(async (service) => [service.name, await service.status()] as const)
+        )
       );
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return;

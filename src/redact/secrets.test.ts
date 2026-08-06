@@ -1,7 +1,7 @@
 import { deepStrictEqual, match, strictEqual } from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { redactKubernetesSecrets, redactVaultSecretValues } from './secrets.js';
+import { redactKubernetesSecrets, redactVaultSecretValues, redactVaultTokenMaterial } from './secrets.js';
 
 describe('redactKubernetesSecrets', () => {
   it('вырезает data и stringData у Secret', () => {
@@ -70,5 +70,30 @@ describe('redactVaultSecretValues', () => {
     const auth = (value as { auth: Record<string, unknown> }).auth;
     strictEqual(auth.client_token === 'hvs.CAESI', false);
     strictEqual(auth.lease_duration, 3600);
+  });
+});
+
+describe('redactVaultTokenMaterial', () => {
+  it('вырезает data.id и accessor у token lookup, оставляя policies', () => {
+    const { value, redacted } = redactVaultTokenMaterial({
+      data: {
+        id: 'hvs.CAESIIvtaeB2',
+        accessor: '2LuUPjXo',
+        display_name: 'oidc-kmanankov',
+        policies: ['default'],
+        identity_policies: ['infra-k8s-ro'],
+        meta: { role: 'default' },
+        ttl: 2763969
+      }
+    });
+
+    strictEqual(redacted, 2);
+    const data = (value as { data: Record<string, unknown> }).data;
+    match(String(data.id), /вырезано/);
+    match(String(data.accessor), /вырезано/);
+    strictEqual(data.display_name, 'oidc-kmanankov');
+    deepStrictEqual(data.policies, ['default']);
+    deepStrictEqual(data.identity_policies, ['infra-k8s-ro']);
+    strictEqual(data.ttl, 2763969);
   });
 });

@@ -200,9 +200,16 @@ platform-mcp logout [сервис]    # удалить сохранённую с
 ```
 argocd_exec { "args": ["app", "list", "-o", "json"] }
 argocd_exec { "args": ["app", "sync", "team-a-api"] }
+vault_auth_status   # сначала: username, role, policies
+vault_exec  { "args": ["token", "lookup"] }
 vault_exec  { "args": ["kv", "list", "kv/teams"] }
 vault_exec  { "args": ["kv", "get", "kv/teams/team-a/postgres"] }
 ```
+
+Для Vault начинайте с `vault_auth_status`: по `policies` сразу видно, есть ли доступ к KV.
+`["token","lookup"]` — канон CLI (не `lookup-self`). `sys/mounts` у обычных OIDC-пользователей
+часто 403 — не используйте для discovery. Exit code 2 у `kv list` обычно значит «пусто или нет
+list ACL», а не «нужно пробовать другой mount».
 
 Аргументы всегда передаются массивом и никогда не склеиваются в строку: shell не
 участвует, поэтому `;` и `$(...)` в аргументах остаются обычным текстом.

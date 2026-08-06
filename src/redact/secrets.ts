@@ -90,6 +90,46 @@ export const redactKubernetesSecrets = (value: unknown): RedactionResult => {
   return { value: result, redacted: counter.n };
 };
 
+const TOKEN_AUTH_KEYS = ['client_token', 'token', 'accessor', 'wrapping_token'] as const;
+
+/** Вырезает токены в auth/wrap_info — общий кусок для KV get и token lookup. */
+const redactAuthNodes = (value: Record<string, unknown>, counter: { n: number }): void => {
+  for (const field of ['auth', 'wrap_info'] as const) {
+    const node = value[field];
+    if (!isRecord(node)) continue;
+    for (const key of TOKEN_AUTH_KEYS) {
+      if (typeof node[key] === 'string') {
+        node[key] = redactedLabel(node[key]);
+        counter.n += 1;
+      }
+    }
+  }
+};
+
+/**
+ * Вырезает сам токен и accessor из любого JSON-ответа Vault.
+ *
+ * Нужно всегда (в т.ч. для `token lookup`): иначе `data.id` (hvs...) уезжает
+ * в контекст модели. Policies, display_name, ttl, meta не трогаем.
+ */
+export const redactVaultTokenMaterial = (value: unknown): RedactionResult => {
+  const counter = { n: 0 };
+  if (!isRecord(value)) return { value, redacted: 0 };
+
+  const data = value.data;
+  if (isRecord(data)) {
+    for (const key of ['id', 'accessor'] as const) {
+      if (typeof data[key] === 'string') {
+        data[key] = redactedLabel(data[key]);
+        counter.n += 1;
+      }
+    }
+  }
+
+  redactAuthNodes(value, counter);
+  return { value, redacted: counter.n };
+};
+
 /**
  * Вырезает значения секретов из ответа `vault ... -format=json`.
  *
@@ -100,6 +140,9 @@ export const redactKubernetesSecrets = (value: unknown): RedactionResult => {
  * Ответы sys-эндпоинтов (`sys/mounts`, `auth list`, `policy read`) — это
  * конфигурация, а не секреты, поэтому вырезание применяется только к ответам
  * KV-путей; решение принимается вызывающей стороной по самой команде.
+ *
+ * Token material (auth/wrap_info) тоже чистится здесь; для остальных команд
+ * используйте `redactVaultTokenMaterial`.
  */
 export const redactVaultSecretValues = (value: unknown): RedactionResult => {
   const counter = { n: 0 };
@@ -117,17 +160,6 @@ export const redactVaultSecretValues = (value: unknown): RedactionResult => {
     }
   }
 
-  // Токены и обёртки приезжают вне data — их тоже нельзя отдавать в контекст.
-  for (const field of ['auth', 'wrap_info'] as const) {
-    const node = value[field];
-    if (!isRecord(node)) continue;
-    for (const key of ['client_token', 'token', 'accessor', 'wrapping_token'] as const) {
-      if (typeof node[key] === 'string') {
-        node[key] = redactedLabel(node[key]);
-        counter.n += 1;
-      }
-    }
-  }
-
+  redactAuthNodes(value, counter);
   return { value, redacted: counter.n };
 };

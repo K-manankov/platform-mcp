@@ -22,6 +22,10 @@ export interface StoredSession {
   renewable?: boolean;
   /** Кто вошёл — для *_auth_status. */
   username?: string;
+  /** OIDC role (Vault); не подставлять вместо username. */
+  role?: string;
+  /** Политики токена (Vault): token_policies ∪ identity_policies. */
+  policies?: string[];
 }
 
 export const loadSession = (path: string): StoredSession | null => {

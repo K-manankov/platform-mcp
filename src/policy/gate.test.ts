@@ -2,7 +2,7 @@ import { deepStrictEqual, strictEqual } from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { PolicyConfig } from '../config.js';
-import { describe as describeCommand, evaluate, isReadOnly, leadingWords, touchesVaultSecrets } from './gate.js';
+import { describe as describeCommand, evaluate, isReadOnly, leadingWords, normalizeVaultArgs, touchesVaultSecrets } from './gate.js';
 
 const policy = (overrides: Partial<PolicyConfig> = {}): PolicyConfig => ({
   requireConfirmation: true,
@@ -33,6 +33,8 @@ describe('isReadOnly', () => {
     strictEqual(isReadOnly('vault', ['kv', 'get', 'kv/teams/team-a/db']), true);
     strictEqual(isReadOnly('vault', ['read', 'sys/mounts']), true);
     strictEqual(isReadOnly('vault', ['status']), true);
+    strictEqual(isReadOnly('vault', ['token', 'lookup']), true);
+    strictEqual(isReadOnly('vault', ['token', 'lookup-self']), true);
   });
 
   it('мутирующий глагол перевешивает читающий', () => {
@@ -49,7 +51,21 @@ describe('isReadOnly', () => {
   });
 });
 
+describe('normalizeVaultArgs', () => {
+  it('меняет token lookup-self на token lookup', () => {
+    deepStrictEqual(normalizeVaultArgs(['token', 'lookup-self']), ['token', 'lookup']);
+  });
+
+  it('не трогает остальные команды', () => {
+    deepStrictEqual(normalizeVaultArgs(['kv', 'list', 'kv/teams']), ['kv', 'list', 'kv/teams']);
+  });
+});
+
 describe('evaluate', () => {
+  it('пропускает token lookup-self без подтверждения', () => {
+    deepStrictEqual(evaluate('vault', ['token', 'lookup-self'], policy()), { kind: 'allow' });
+  });
+
   it('пропускает чтение без подтверждения', () => {
     deepStrictEqual(evaluate('argocd', ['app', 'list'], policy()), { kind: 'allow' });
   });
