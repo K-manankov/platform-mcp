@@ -1,6 +1,6 @@
 {
   "name": "@sonar/platform-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP-сервер для инфраструктурных сервисов (Argo CD, Vault) с входом через GitLab SSO",
   "type": "module",
   "bin": {
@@ -17,8 +17,8 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "check:versions": "node scripts/check-versions.mjs",
-    "test": "npm run build && find dist -name '*.test.js' -print0 | xargs -0 node --test"
+    "test": "npm run build && find dist -name '*.test.js' -print0 | xargs -0 node --test",
+    "check:manifests": "node scripts/check-manifests.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

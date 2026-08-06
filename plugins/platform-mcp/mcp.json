@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "platform": {
+      "command": "npx",
+      "args": ["-y", "@sonar/platform-mcp"],
+      "env": {
+        "ARGOCD_BASE_URL": "https://argocd.infra.sonar-corp.ru",
+        "VAULT_ADDR": "https://vault.infra.sonar-corp.ru",
+        "PLATFORM_MCP_INSECURE": "true"
+      }
+    }
+  }
+}
