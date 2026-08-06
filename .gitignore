@@ -12,3 +12,6 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# Скрэтч-данные прогонов skill-creator (evals/eval-viewer) — не часть плагина.
+sonar-platform-skills-workspace/
