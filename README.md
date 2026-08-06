@@ -22,24 +22,61 @@ CLI, поэтому доступно всё, что умеют они, а не �
 
 ## Установка
 
-Пакет публикуется в npm registry этого GitLab-проекта, а не в публичный npm — нужен токен
-с правом `read_package_registry` (личный access token или deploy token проекта).
+### Шаг 1. Доступ к реестру пакетов
 
-Добавьте в `~/.npmrc`:
+Нужен один раз и для всех способов ниже: пакет лежит в npm registry этого GitLab-проекта,
+а не в публичном npm. Возьмите токен с правом `read_package_registry` (личный access token
+или deploy token проекта) и добавьте в `~/.npmrc`:
 
 ```
 @sonar:registry=https://git.sonar-corp.ru/api/v4/projects/98/packages/npm/
 //git.sonar-corp.ru/api/v4/projects/98/packages/npm/:_authToken=<ваш gitlab токен>
 ```
 
-Дальше обычная установка:
+### Шаг 2. Подключение к редактору
+
+**Claude Code и Cursor — плагином.** Репозиторий сам себе каталог плагинов, поэтому
+достаточно двух команд:
+
+```
+/plugin marketplace add https://git.sonar-corp.ru/infra/k8s/platform-mcp.git
+/plugin install platform-mcp
+```
+
+Адреса Argo CD и Vault уже прописаны в плагине — настраивать ничего не нужно.
+Обновления приезжают сами: плагин запускает сервер через `npx -y`, то есть всегда
+последнюю опубликованную версию. Обновить сам плагин — `/plugin marketplace update`.
+
+**Claude Desktop** плагины этого формата не устанавливает, поэтому там запись делается
+вручную. Поставьте пакет глобально:
 
 ```bash
 npm install -g @sonar/platform-mcp
 ```
 
-Argo CD и Vault ставить отдельно **не нужно**: сервер сам скачает нужные версии CLI при
-первом обращении (см. [Откуда берутся argocd и vault](#откуда-берутся-argocd-и-vault)).
+и добавьте в `claude_desktop_config.json` (Settings → Developer → Edit Config). Путь к
+`node` и к серверу — обязательно абсолютные: GUI-приложения на macOS не наследуют `PATH`
+из шелла. Свои пути посмотрите командами `which node` и `which platform-mcp`:
+
+```json
+{
+  "mcpServers": {
+    "platform": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/opt/homebrew/lib/node_modules/@sonar/platform-mcp/dist/index.js"],
+      "env": {
+        "ARGOCD_BASE_URL": "https://argocd.infra.sonar-corp.ru",
+        "VAULT_ADDR": "https://vault.infra.sonar-corp.ru",
+        "PLATFORM_MCP_INSECURE": "true"
+      }
+    }
+  }
+}
+```
+
+Argo CD и Vault ставить отдельно **не нужно** ни в одном из вариантов: сервер сам скачает
+нужные версии CLI при первом обращении (см.
+[Откуда берутся argocd и vault](#откуда-берутся-argocd-и-vault)).
 
 ## Вход
 
@@ -47,6 +84,12 @@ Argo CD и Vault ставить отдельно **не нужно**: серве
 только изнутри сети. Снаружи их подхватывает публичный wildcard `*.infra.sonar-corp.ru`,
 и запрос молча уезжает не туда — проверка `dig +short argocd.infra.sonar-corp.ru` должна
 дать `192.168.88.106`.
+
+Проще всего войти прямо из диалога: попросите агента вызвать `argocd_login` или
+`vault_login`, откройте выданную ссылку и завершите вход через GitLab. Перезапускать
+редактор не нужно.
+
+То же самое из терминала, если пакет установлен глобально:
 
 ```bash
 export ARGOCD_BASE_URL=https://argocd.infra.sonar-corp.ru
@@ -58,7 +101,8 @@ platform-mcp login vault    # только в один
 ```
 
 Откроется браузер, дальше обычный вход через GitLab. Сессии лягут в
-`~/.config/platform-mcp/` с правами `0600`.
+`~/.config/platform-mcp/` с правами `0600` и общие для всех редакторов: войдя один раз,
+вы вошли везде.
 
 По SSH или в devcontainer, где браузера нет:
 
@@ -80,24 +124,11 @@ platform-mcp login --no-browser
 VAULT_OIDC_MOUNT=oidc-admin platform-mcp login vault
 ```
 
-## Подключение к редактору
+## Настройка
 
-```json
-{
-  "mcpServers": {
-    "platform": {
-      "command": "platform-mcp",
-      "env": {
-        "ARGOCD_BASE_URL": "https://argocd.infra.sonar-corp.ru",
-        "VAULT_ADDR": "https://vault.infra.sonar-corp.ru",
-        "PLATFORM_MCP_INSECURE": "true"
-      }
-    }
-  }
-}
-```
-
-Вместо переменных окружения настройки можно положить в
+Менять что-либо необязательно — адреса уже прописаны в плагине. Если нужно другое
+(свой инстанс, вход в Vault через `oidc-admin`, свои запреты), настройки можно переопределить
+переменными окружения в конфиге редактора либо положить в
 `~/.config/platform-mcp/config.json`:
 
 ```json
@@ -306,16 +337,45 @@ npm test
 подтверждения, отсутствие shell при запуске CLI и собственный распаковщик ZIP (он нужен
 потому, что HashiCorp отдаёт `vault` архивом, а встроенного распаковщика в Node нет).
 
+### Плагин
+
+Репозиторий одновременно и каталог плагинов, и сам плагин:
+
+```
+.claude-plugin/marketplace.json      каталог для Claude Code
+.cursor-plugin/marketplace.json      каталог для Cursor
+plugins/platform-mcp/
+  .claude-plugin/plugin.json         манифест для Claude Code
+  .cursor-plugin/plugin.json         манифест для Cursor
+  .mcp.json                          описание сервера, общее для обоих
+```
+
+Код сервера в плагин не копируется: `.mcp.json` запускает опубликованный пакет через
+`npx`, поэтому плагин остаётся тремя небольшими файлами и не требует пересборки при
+изменениях сервера.
+
+Проверить изменения до пуша можно, подключив каталог с локального пути:
+
+```
+/plugin marketplace add /путь/к/platform-mcp
+/plugin install platform-mcp
+```
+
 ## Публикация
 
 CI ([.gitlab-ci.yml](.gitlab-ci.yml)) публикует пакет в GitLab npm registry этого проекта
 автоматически по тегу вида `vX.Y.Z`, аутентификация — через встроенный `CI_JOB_TOKEN`,
 личных токенов в CI не требуется.
 
+Версия продублирована в манифестах плагина, и её нужно поднимать там же:
+
 ```bash
-npm version <major|minor|patch>   # обновит version в package.json и создаст git-тег
-git push --follow-tags
+npm version <major|minor|patch> --no-git-tag-version   # только package.json
+# поправить version в обоих plugins/platform-mcp/*/plugin.json
+npm run check:versions                                 # сверить
+git commit -am "0.X.Y" && git tag v0.X.Y && git push --follow-tags
 ```
 
-Job сверяет версию из тега с `package.json.version` и падает при расхождении, чтобы не
-опубликовать не ту версию по ошибке.
+Расхождение поймает CI: задание `test` сверяет версии в трёх манифестах, а `publish` —
+версию из тега с `package.json`. Без этого плагин у пользователя остался бы «неизменившимся»
+при свежем сервере: и Claude Code, и Cursor решают, обновлять ли плагин, по его `version`.

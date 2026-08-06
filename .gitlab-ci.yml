@@ -20,6 +20,7 @@ test:
     - dind
   script:
     - npm ci --cache .npm --prefer-offline
+    - npm run check:versions
     - npm run typecheck
     - npm test
   rules:

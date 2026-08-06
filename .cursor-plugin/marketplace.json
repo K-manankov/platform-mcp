@@ -1,0 +1,20 @@
+{
+  "name": "sonar-infra",
+  "description": "Плагины инфраструктурной команды sonar для работы с кластером sonar-prod",
+  "owner": {
+    "name": "infra/k8s",
+    "email": "kmanankov@sonar-corp.ru"
+  },
+  "plugins": [
+    {
+      "name": "platform-mcp",
+      "description": "Argo CD и Vault кластера sonar-prod с входом через GitLab SSO",
+      "author": {
+        "name": "infra/k8s"
+      },
+      "source": "./plugins/platform-mcp",
+      "category": "deployment",
+      "homepage": "https://git.sonar-corp.ru/infra/k8s/platform-mcp"
+    }
+  ]
+}

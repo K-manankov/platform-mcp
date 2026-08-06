@@ -1,0 +1,12 @@
+{
+  "name": "platform-mcp",
+  "description": "Argo CD и Vault кластера sonar-prod с входом через GitLab SSO. Команды выполняются от имени вошедшего пользователя, значения секретов в контекст модели не попадают.",
+  "version": "0.2.0",
+  "author": {
+    "name": "infra/k8s"
+  },
+  "homepage": "https://git.sonar-corp.ru/infra/k8s/platform-mcp",
+  "repository": "https://git.sonar-corp.ru/infra/k8s/platform-mcp.git",
+  "license": "UNLICENSED",
+  "keywords": ["argocd", "vault", "kubernetes", "sso", "infrastructure"]
+}
