@@ -10,9 +10,10 @@
  *
  * 2. Описание сервера лежит в двух файлах разной формы. Claude Code читает
  *    .mcp.json как плоскую карту «имя → сервер», Cursor — mcp.json с обёрткой
- *    mcpServers (так устроены рабочие плагины обоих клиентов). Содержимое
- *    обязано совпадать, иначе клиенты получат разные адреса или разные
- *    переменные, и разойдутся они незаметно.
+ *    mcpServers. command/args и ключи env обязаны совпадать. Значения env у
+ *    Cursor — плейсхолдеры ${VAR} (variables в plugin.json), у Claude —
+ *    литеральные дефолты: иначе Claude Code подставил бы пустой ${VAR} и
+ *    сломал URL.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -44,6 +45,7 @@ if (versions.some((entry) => entry.version !== expected)) {
 }
 
 // --- описание сервера ---
+const cursorPlugin = read(`${PLUGIN}/.cursor-plugin/plugin.json`);
 const claudeServers = read(`${PLUGIN}/.mcp.json`);
 const cursorFile = read(`${PLUGIN}/mcp.json`);
 const cursorServers = cursorFile.mcpServers;
@@ -55,17 +57,80 @@ if ('mcpServers' in claudeServers) {
   );
 }
 
-if (!cursorServers) {
-  problems.push(`${PLUGIN}/mcp.json должен содержать объект mcpServers — так его читает Cursor.`);
-} else if (JSON.stringify(claudeServers) !== JSON.stringify(cursorServers)) {
-  problems.push(
-    `Описания сервера в ${PLUGIN}/.mcp.json и ${PLUGIN}/mcp.json различаются. ` +
-      'Содержимое обязано совпадать — отличается только форма файла.'
-  );
-}
+const variableDefaults = (() => {
+  const props = cursorPlugin.variables?.properties;
+  if (!props || typeof props !== 'object') return {};
+  const out = {};
+  for (const [name, schema] of Object.entries(props)) {
+    if (schema && typeof schema === 'object' && 'default' in schema) {
+      out[name] = schema.default;
+    }
+  }
+  return out;
+})();
+
+/** Cursor ${KEY} + Claude-литерал = default из variables, либо значения равны. */
+const envValuesCompatible = (key, cursorVal, claudeVal) => {
+  if (cursorVal === claudeVal) return true;
+  if (cursorVal === `\${${key}}` && claudeVal === variableDefaults[key]) return true;
+  return false;
+};
+
+const compareServers = (claudeMap, cursorMap) => {
+  if (!cursorMap) {
+    problems.push(`${PLUGIN}/mcp.json должен содержать объект mcpServers — так его читает Cursor.`);
+    return;
+  }
+
+  const claudeNames = Object.keys(claudeMap).sort();
+  const cursorNames = Object.keys(cursorMap).sort();
+  if (JSON.stringify(claudeNames) !== JSON.stringify(cursorNames)) {
+    problems.push(
+      `Имена серверов в ${PLUGIN}/.mcp.json и ${PLUGIN}/mcp.json различаются: ` +
+        `Claude [${claudeNames.join(', ')}], Cursor [${cursorNames.join(', ')}].`
+    );
+    return;
+  }
+
+  for (const name of claudeNames) {
+    const claude = claudeMap[name];
+    const cursor = cursorMap[name];
+    if (claude.command !== cursor.command || JSON.stringify(claude.args) !== JSON.stringify(cursor.args)) {
+      problems.push(
+        `Сервер «${name}»: command/args в ${PLUGIN}/.mcp.json и ${PLUGIN}/mcp.json различаются.`
+      );
+    }
+
+    const claudeEnv = claude.env && typeof claude.env === 'object' ? claude.env : {};
+    const cursorEnv = cursor.env && typeof cursor.env === 'object' ? cursor.env : {};
+    const claudeKeys = Object.keys(claudeEnv).sort();
+    const cursorKeys = Object.keys(cursorEnv).sort();
+    if (JSON.stringify(claudeKeys) !== JSON.stringify(cursorKeys)) {
+      problems.push(
+        `Сервер «${name}»: набор ключей env различается — ` +
+          `Claude [${claudeKeys.join(', ')}], Cursor [${cursorKeys.join(', ')}].`
+      );
+      continue;
+    }
+
+    for (const key of claudeKeys) {
+      if (!envValuesCompatible(key, cursorEnv[key], claudeEnv[key])) {
+        problems.push(
+          `Сервер «${name}»: env.${key} не согласован. ` +
+            `У Cursor ожидается "\${${key}}" (или тот же литерал), ` +
+            `у Claude — default из variables (${JSON.stringify(variableDefaults[key])}) ` +
+            `или то же значение. Сейчас Cursor=${JSON.stringify(cursorEnv[key])}, ` +
+            `Claude=${JSON.stringify(claudeEnv[key])}.`
+        );
+      }
+    }
+  }
+};
+
+compareServers(claudeServers, cursorServers);
 
 // Ссылка Cursor должна вести на его же файл, иначе он прочитает не ту форму.
-const cursorRef = read(`${PLUGIN}/.cursor-plugin/plugin.json`).mcpServers;
+const cursorRef = cursorPlugin.mcpServers;
 if (cursorRef !== './mcp.json') {
   problems.push(
     `В ${PLUGIN}/.cursor-plugin/plugin.json поле mcpServers должно указывать на "./mcp.json", ` +

@@ -4,9 +4,10 @@
       "command": "npx",
       "args": ["-y", "@sonar/platform-mcp"],
       "env": {
-        "ARGOCD_BASE_URL": "https://argocd.infra.sonar-corp.ru",
-        "VAULT_ADDR": "https://vault.infra.sonar-corp.ru",
-        "PLATFORM_MCP_INSECURE": "true"
+        "ARGOCD_BASE_URL": "${ARGOCD_BASE_URL}",
+        "VAULT_ADDR": "${VAULT_ADDR}",
+        "PLATFORM_MCP_INSECURE": "${PLATFORM_MCP_INSECURE}",
+        "VAULT_OIDC_MOUNT": "${VAULT_OIDC_MOUNT}"
       }
     }
   }

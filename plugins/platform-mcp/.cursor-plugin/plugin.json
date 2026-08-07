@@ -1,7 +1,7 @@
 {
   "name": "platform-mcp",
   "displayName": "Platform MCP (Argo CD + Vault)",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Argo CD и Vault кластера sonar-prod с входом через GitLab SSO. Команды выполняются от имени вошедшего пользователя, значения секретов в контекст модели не попадают.",
   "author": {
     "name": "infra/k8s"
@@ -15,5 +15,36 @@
     "sso",
     "infrastructure"
   ],
-  "mcpServers": "./mcp.json"
+  "mcpServers": "./mcp.json",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "ARGOCD_BASE_URL": {
+        "type": "string",
+        "title": "Argo CD URL",
+        "description": "Базовый URL Argo CD",
+        "default": "https://argocd.infra.sonar-corp.ru"
+      },
+      "VAULT_ADDR": {
+        "type": "string",
+        "title": "Vault URL",
+        "description": "Базовый URL Vault",
+        "default": "https://vault.infra.sonar-corp.ru"
+      },
+      "PLATFORM_MCP_INSECURE": {
+        "type": "string",
+        "title": "Skip TLS verify",
+        "description": "true, пока у ingress нет нормальных сертификатов",
+        "default": "true",
+        "enum": ["true", "false"]
+      },
+      "VAULT_OIDC_MOUNT": {
+        "type": "string",
+        "title": "Vault OIDC mount",
+        "description": "oidc — обычный вход; oidc-admin — полные права для Owner'ов группы infra/k8s",
+        "default": "oidc",
+        "enum": ["oidc", "oidc-admin"]
+      }
+    }
+  }
 }

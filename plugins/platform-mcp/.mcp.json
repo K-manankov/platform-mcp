@@ -5,7 +5,8 @@
     "env": {
       "ARGOCD_BASE_URL": "https://argocd.infra.sonar-corp.ru",
       "VAULT_ADDR": "https://vault.infra.sonar-corp.ru",
-      "PLATFORM_MCP_INSECURE": "true"
+      "PLATFORM_MCP_INSECURE": "true",
+      "VAULT_OIDC_MOUNT": "oidc"
     }
   }
 }
