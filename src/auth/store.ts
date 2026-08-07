@@ -12,11 +12,11 @@ import { dirname, join } from 'node:path';
 export interface StoredSession {
   /** Адрес сервиса, которому принадлежит токен. */
   url: string;
-  /** Токен для похода в сервис: id_token у Argo CD, client_token у Vault. */
+  /** Токен для похода в сервис: id_token у Argo CD, client_token у Vault, access_token у Keycloak. */
   token: string;
-  /** epoch ms; для Argo CD из claim exp, для Vault из lease_duration. */
+  /** epoch ms; для Argo CD/Keycloak из claim exp, для Vault из lease_duration. */
   expiresAt: number;
-  /** Только Argo CD: refresh-токен OIDC. У Vault обновление идёт через renew-self. */
+  /** Argo CD / Keycloak: refresh-токен OIDC. У Vault обновление идёт через renew-self. */
   refreshToken?: string;
   /** Только Vault: можно ли продлевать токен через auth/token/renew-self. */
   renewable?: boolean;

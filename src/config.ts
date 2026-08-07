@@ -13,13 +13,20 @@ import { readFileSync } from 'node:fs';
  */
 export const PINNED_CLI_VERSIONS = {
   argocd: 'v3.4.5',
-  vault: '2.0.3'
+  vault: '2.0.3',
+  /** Совпадает с image.tag в platform/keycloak (infra). */
+  kcadm: '26.6.4'
 } as const;
 
 export interface ServiceConfig {
   /** Базовый URL сервиса, например https://argocd.infra.sonar-corp.ru */
   url: string;
   sessionPath: string;
+}
+
+export interface KeycloakConfig extends ServiceConfig {
+  /** Приватный kcadm.config (не ~/.keycloak/). */
+  kcadmConfigPath: string;
 }
 
 export interface PolicyConfig {
@@ -55,6 +62,7 @@ export interface VaultOidcConfig {
 export interface AppConfig {
   argocd?: ServiceConfig;
   vault?: ServiceConfig;
+  keycloak?: KeycloakConfig;
   vaultOidc: VaultOidcConfig;
   configDir: string;
   binDir: string;
@@ -81,7 +89,11 @@ const DEFAULT_POLICY: PolicyConfig = {
     'metallb',
     'metallb-config',
     'local-path-provisioner',
-    'projects'
+    'projects',
+    'keycloak',
+    'keycloak-db',
+    'keycloak-operator',
+    'keycloak-config'
   ],
   denyVaultPaths: [],
   allowSecretValues: false
@@ -127,6 +139,15 @@ const service = (
   };
 };
 
+const keycloakService = (dir: string, rawUrl: string | undefined): KeycloakConfig | undefined => {
+  if (!rawUrl) return undefined;
+  return {
+    url: rawUrl.replace(/\/+$/, ''),
+    sessionPath: join(dir, 'keycloak-session.json'),
+    kcadmConfigPath: join(dir, 'kcadm.config')
+  };
+};
+
 export const loadConfig = (): AppConfig => {
   const dir = configDir();
   const file = readConfigFile(dir);
@@ -142,10 +163,15 @@ export const loadConfig = (): AppConfig => {
     process.env.VAULT_BASE_URL ||
     (typeof file.vaultUrl === 'string' ? file.vaultUrl : undefined);
 
-  if (!argocdUrl && !vaultUrl) {
+  const keycloakUrl =
+    process.env.KEYCLOAK_BASE_URL ||
+    process.env.KEYCLOAK_URL ||
+    (typeof file.keycloakUrl === 'string' ? file.keycloakUrl : undefined);
+
+  if (!argocdUrl && !vaultUrl && !keycloakUrl) {
     throw new Error(
-      'Не задан адрес ни одного сервиса. Укажите ARGOCD_BASE_URL и/или VAULT_ADDR ' +
-        `(например https://argocd.infra.sonar-corp.ru), либо поля argocdUrl / vaultUrl в ${join(dir, 'config.json')}.`
+      'Не задан адрес ни одного сервиса. Укажите ARGOCD_BASE_URL, VAULT_ADDR и/или KEYCLOAK_BASE_URL ' +
+        `(например https://argocd.infra.sonar-corp.ru), либо поля argocdUrl / vaultUrl / keycloakUrl в ${join(dir, 'config.json')}.`
     );
   }
 
@@ -155,6 +181,7 @@ export const loadConfig = (): AppConfig => {
   return {
     argocd: service(dir, 'argocd', argocdUrl),
     vault: service(dir, 'vault', vaultUrl),
+    keycloak: keycloakService(dir, keycloakUrl),
     vaultOidc: {
       mount: process.env.VAULT_OIDC_MOUNT || str(file.vaultOidcMount, 'oidc'),
       role: process.env.VAULT_OIDC_ROLE || str(file.vaultOidcRole, 'default')

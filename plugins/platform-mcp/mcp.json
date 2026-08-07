@@ -6,6 +6,7 @@
       "env": {
         "ARGOCD_BASE_URL": "${ARGOCD_BASE_URL}",
         "VAULT_ADDR": "${VAULT_ADDR}",
+        "KEYCLOAK_BASE_URL": "${KEYCLOAK_BASE_URL}",
         "PLATFORM_MCP_INSECURE": "${PLATFORM_MCP_INSECURE}",
         "VAULT_OIDC_MOUNT": "${VAULT_OIDC_MOUNT}"
       }

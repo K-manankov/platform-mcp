@@ -1,8 +1,11 @@
 import { strictEqual, throws } from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { describe, it } from 'node:test';
 
-import { extractFromZip } from './unzip.js';
+import { extractFromZip, extractZipToDir } from './unzip.js';
 
 /**
  * Собирает ZIP руками: готового упаковщика в стандартной библиотеке нет, а
@@ -84,5 +87,27 @@ describe('extractFromZip', () => {
 
   it('не притворяется, что разобрал не-ZIP', () => {
     throws(() => extractFromZip(Buffer.alloc(64), 'vault'), /не похоже на zip/i);
+  });
+});
+
+describe('extractZipToDir', () => {
+  it('распаковывает дерево файлов и отклоняет zip-slip', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'platform-mcp-zip-'));
+    try {
+      const zip = buildZip([
+        { name: 'keycloak-1/bin/kcadm.sh', content: Buffer.from('#!/bin/sh\n'.repeat(50)) },
+        { name: 'keycloak-1/lib/a.jar', content: Buffer.from('jar'.repeat(100)) }
+      ]);
+      extractZipToDir(zip, dir);
+      strictEqual(
+        readFileSync(join(dir, 'keycloak-1/bin/kcadm.sh'), 'utf8').startsWith('#!/bin/sh'),
+        true
+      );
+
+      const slip = buildZip([{ name: '../evil', content: Buffer.from('x'.repeat(100)) }]);
+      throws(() => extractZipToDir(slip, dir), /недопустимый путь/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

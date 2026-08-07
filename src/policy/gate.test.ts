@@ -37,12 +37,18 @@ describe('isReadOnly', () => {
     strictEqual(isReadOnly('vault', ['token', 'lookup-self']), true);
   });
 
+  it('распознаёт читающие команды keycloak', () => {
+    strictEqual(isReadOnly('keycloak', ['get', 'realms']), true);
+    strictEqual(isReadOnly('keycloak', ['get-roles', '-r', 'master']), true);
+  });
+
   it('мутирующий глагол перевешивает читающий', () => {
     strictEqual(isReadOnly('argocd', ['app', 'sync', 'api']), false);
     strictEqual(isReadOnly('vault', ['kv', 'put', 'kv/teams/team-a/db', 'p=1']), false);
     // "actions" помечен мутирующим: agent actions list читается редко, а
     // actions run меняет ресурс — замыкаем в безопасную сторону.
     strictEqual(isReadOnly('argocd', ['app', 'actions', 'list', 'api']), false);
+    strictEqual(isReadOnly('keycloak', ['create', 'clients', '-r', 'sonar-prod']), false);
   });
 
   it('незнакомая команда не считается читающей', () => {
@@ -93,6 +99,13 @@ describe('evaluate', () => {
     // токен, и чужой адрес отправил бы его наружу.
     strictEqual(evaluate('argocd', ['app', 'list', '--server', 'evil.example'], policy()).kind, 'deny');
     strictEqual(evaluate('vault', ['kv', 'get', '-address=http://evil', 'kv/a'], policy()).kind, 'deny');
+    strictEqual(evaluate('keycloak', ['get', 'realms', '--server', 'http://evil'], policy()).kind, 'deny');
+    strictEqual(evaluate('keycloak', ['config', 'credentials'], policy()).kind, 'deny');
+  });
+
+  it('для keycloak мутация уходит в confirm (сервер превратит в warning)', () => {
+    strictEqual(evaluate('keycloak', ['create', 'clients', '-r', 'sonar-prod'], policy()).kind, 'confirm');
+    deepStrictEqual(evaluate('keycloak', ['get', 'realms'], policy()), { kind: 'allow' });
   });
 
   it('запрещает вход и команды, которые не завершаются', () => {

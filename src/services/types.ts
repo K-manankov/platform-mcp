@@ -1,4 +1,4 @@
-export type ServiceName = 'argocd' | 'vault';
+export type ServiceName = 'argocd' | 'vault' | 'keycloak';
 
 /** Сессии нет или её уже не восстановить — нужен интерактивный вход. */
 export class AuthRequiredError extends Error {

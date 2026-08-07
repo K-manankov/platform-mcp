@@ -15,6 +15,11 @@ import { AuthRequiredError, type ServiceModule, type ServiceName } from './servi
 /** Имя аргумента с токеном подтверждения. Двойное подчёркивание — чтобы не пересечься с полями CLI. */
 export const CONFIRM_ARG = '__confirm';
 
+const KEYCLOAK_MUTATION_WARNING =
+  '[Внимание: мутация Keycloak через CLI. Конфигурация ведётся GitOps (CR keycloak-operator) — ' +
+  'оператор может перетереть или удалить ручные правки при sync. Предпочтительно менять через CR ' +
+  'в deploy/ репозитория проекта или platform/keycloak-config/.]\n\n';
+
 const text = (value: string): CallToolResult => ({ content: [{ type: 'text', text: value }] });
 const fail = (value: string): CallToolResult => ({
   isError: true,
@@ -83,8 +88,11 @@ export class PlatformMcpServer {
       {
         name: `${service.name}_login`,
         description:
-          `Начать вход в ${service.title} через GitLab SSO. Возвращает ссылку сразу, не дожидаясь ` +
-          `завершения входа: результат нужно проверить вызовом ${service.name}_auth_status.`,
+          service.name === 'keycloak'
+            ? `Начать вход в ${service.title} через FreeIPA (realm master). Возвращает ссылку сразу, ` +
+              `не дожидаясь завершения входа: результат нужно проверить вызовом ${service.name}_auth_status.`
+            : `Начать вход в ${service.title} через GitLab SSO. Возвращает ссылку сразу, не дожидаясь ` +
+              `завершения входа: результат нужно проверить вызовом ${service.name}_auth_status.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -118,7 +126,7 @@ export class PlatformMcpServer {
       const name = request.params.name;
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
-      const match = /^(argocd|vault)_(exec|login|auth_status|logout)$/.exec(name);
+      const match = /^(argocd|vault|keycloak)_(exec|login|auth_status|logout)$/.exec(name);
       const service = match?.[1] ? this.service(match[1]) : undefined;
       if (!match || !service) return fail(`Неизвестный инструмент ${name}.`);
 
@@ -241,6 +249,12 @@ export class PlatformMcpServer {
     if (decision.kind === 'deny') return fail(decision.reason);
 
     if (decision.kind === 'confirm') {
+      // Keycloak: полный доступ без elicitation — только warning в ответе.
+      if (service.name === 'keycloak') {
+        const stdin = typeof rawArgs.stdin === 'string' ? rawArgs.stdin : undefined;
+        const body = await service.exec(argv, stdin);
+        return text(KEYCLOAK_MUTATION_WARNING + body);
+      }
       const gate = await this.gate(service, argv, decision.summary, rawArgs[CONFIRM_ARG]);
       if (gate) return gate;
     }

@@ -3,12 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { spawn } from 'node:child_process';
 
 /**
- * Локальный listener для OIDC-редиректа, общий для обоих сервисов.
+ * Локальный listener для OIDC-редиректа, общий для сервисов.
  *
- * Отличается у них только порт и путь: Argo CD принимает
- * http://localhost:8085/auth/callback (его Dex регистрирует сам для
- * public-клиента argo-cd-cli), Vault — http://localhost:8250/oidc/callback
- * (см. allowedRedirectURIs в platform/vault-config/30-oidc.yaml).
+ * Отличается у них только порт и путь: Argo CD — http://localhost:8085/auth/callback,
+ * Vault — http://localhost:8250/oidc/callback, Keycloak —
+ * http://localhost:8280/oidc/callback.
  */
 export interface CallbackOptions {
   port: number;

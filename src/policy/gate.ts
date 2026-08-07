@@ -63,6 +63,14 @@ const READ_VERBS: Record<ServiceName, Set<string>> = {
     'capabilities-self',
     'subkeys',
     'metadata'
+  ]),
+  keycloak: new Set([
+    'get',
+    'get-roles',
+    'get-authz-settings',
+    'get-authorization',
+    'help',
+    'version'
   ])
 };
 
@@ -121,6 +129,17 @@ const MUTATING_VERBS: Record<ServiceName, Set<string>> = {
     'seal',
     'unseal',
     'step-down'
+  ]),
+  keycloak: new Set([
+    'create',
+    'update',
+    'delete',
+    'add-roles',
+    'remove-roles',
+    'set-password',
+    'new-object',
+    'create-partial',
+    'flush-cache'
   ])
 };
 
@@ -167,6 +186,12 @@ const DENIED_COMMANDS: Record<ServiceName, Array<{ path: string[]; reason: strin
       reason: 'выпуск root-токена делается вручную и с последующим отзывом.'
     },
     { path: ['operator', 'migrate'], reason: 'миграция хранилища выполняется вручную.' }
+  ],
+  keycloak: [
+    {
+      path: ['config'],
+      reason: 'сессией и truststore управляет сам сервер — вызовите keycloak_login.'
+    }
   ]
 };
 
@@ -189,6 +214,16 @@ const BLOCKED_FLAGS: Record<ServiceName, Record<string, string>> = {
     addr: 'адрес Vault задаётся конфигурацией сервера (VAULT_ADDR).',
     'tls-skip-verify': 'проверка TLS настраивается сервером (PLATFORM_MCP_INSECURE).',
     'ca-cert': 'доверенный корневой сертификат задаётся через NODE_EXTRA_CA_CERTS.'
+  },
+  keycloak: {
+    server: 'адрес Keycloak задаётся конфигурацией сервера (KEYCLOAK_BASE_URL).',
+    config: 'путь к kcadm.config подставляет сам сервер из вашей SSO-сессии.',
+    c: 'путь к kcadm.config подставляет сам сервер из вашей SSO-сессии.',
+    'no-config': 'сессией управляет сам сервер — вызовите keycloak_login.',
+    token: 'токен подставляет сам сервер из вашей SSO-сессии.',
+    user: 'вход делается через keycloak_login (браузер / FreeIPA), не паролем в аргументах.',
+    password: 'вход делается через keycloak_login (браузер / FreeIPA), не паролем в аргументах.',
+    secret: 'секрет клиента не передаётся — используется public-клиент platform-mcp-cli.'
   }
 };
 

@@ -2,24 +2,26 @@
 import { applyTlsPolicy, loadConfig, type AppConfig } from './config.js';
 import { PlatformMcpServer } from './server.js';
 import { ArgoCdService } from './services/argocd/index.js';
+import { KeycloakService } from './services/keycloak/index.js';
 import { VaultService } from './services/vault/index.js';
 import type { ServiceModule } from './services/types.js';
 
-const USAGE = `platform-mcp — MCP-сервер для Argo CD и Vault с входом через GitLab SSO.
+const USAGE = `platform-mcp — MCP-сервер для Argo CD, Vault и Keycloak с SSO-входом.
 
   platform-mcp                       MCP-сервер поверх stdio (так его запускает редактор)
   platform-mcp login [сервис]        интерактивный вход, --no-browser для headless
   platform-mcp status [сервис]       кто вошёл и до какого момента действует токен
   platform-mcp logout [сервис]       удалить сохранённую сессию
 
-Сервис — argocd или vault; без него команда применяется ко всем настроенным.
+Сервис — argocd, vault или keycloak; без него команда применяется ко всем настроенным.
 
-Адреса берутся из ARGOCD_BASE_URL и VAULT_ADDR либо из ~/.config/platform-mcp/config.json.`;
+Адреса берутся из ARGOCD_BASE_URL, VAULT_ADDR, KEYCLOAK_BASE_URL либо из ~/.config/platform-mcp/config.json.`;
 
 const buildServices = (config: AppConfig): ServiceModule[] => {
   const services: ServiceModule[] = [];
   if (config.argocd) services.push(new ArgoCdService(config.argocd, config));
   if (config.vault) services.push(new VaultService(config.vault, config));
+  if (config.keycloak) services.push(new KeycloakService(config.keycloak, config));
   return services;
 };
 
