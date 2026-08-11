@@ -1,6 +1,6 @@
 ---
 name: sonar-platform-onboarding
-description: How to onboard a new project or microservice onto the sonar-prod Kubernetes platform (Argo CD + Vault, GitOps via the platform-mcp plugin). Use whenever the user wants to create a new project on the platform, add a new service/app to the cluster, set up a deploy repository, register a repo with Argo CD, get their team a Vault/AppProject, or asks "how do I get my project onto sonar-prod" — even if they don't say "onboarding" explicitly. Also trigger for questions like "why isn't my new repo showing up in Argo CD" during initial setup.
+description: How to onboard a new project or microservice onto the sonar-prod Kubernetes platform (Argo CD + Vault, GitOps via the platform-mcp plugin). Use whenever the user wants to create a new project on the platform, add a new service/app to the cluster, set up a deploy repository, register a repo with Argo CD, get their team a Vault/AppProject, give their app outbound internet access, expose a port / set up an Ingress or LoadBalancer for their app, or asks "how do I get my project onto sonar-prod" — even if they don't say "onboarding" explicitly. Also trigger for questions like "why isn't my new repo showing up in Argo CD" during initial setup.
 ---
 
 # Onboarding a project onto sonar-prod
@@ -78,6 +78,86 @@ actually at the repo root, the repo isn't under `k8s-projects/<project>` (a subg
 deeper won't match), or Argo CD's clone credential (a deploy token scoped to the whole
 `k8s-projects` group) doesn't have access — that's a platform-team-side issue, not something to
 fix from the project side.
+
+## Outbound internet access
+
+Pods have no direct route to the internet — there's no default egress path out of the cluster.
+Any app that needs to call an external API, download a package at runtime, etc. must be pointed at
+the `mihomo` proxy explicitly:
+
+```yaml
+env:
+  - name: HTTP_PROXY
+    value: http://mihomo.infra.sonar-corp.ru:7890
+  - name: ALL_PROXY
+    value: socks5://mihomo.infra.sonar-corp.ru:7890
+  - name: NO_PROXY
+    value: .svc.cluster.local,.cluster.local,10.0.0.0/8,192.168.88.0/24
+```
+
+The `NO_PROXY` entry matters — without it, in-cluster service calls and calls to other
+`*.infra.sonar-corp.ru` platform hosts get routed through the proxy too and typically just time
+out. This is a per-app manifest change in the project's own `deploy/` directory, not something the
+platform sets up automatically. See the **debug** skill's "Outbound internet access goes through
+the mihomo proxy" section for the failover/dashboard details and how to tell a proxy misconfig
+apart from an actual app bug.
+
+## Exposing a port
+
+There's no default inbound path into the cluster either — a `Service` alone (`ClusterIP`) is only
+reachable from inside the cluster. Which mechanism to use depends on the protocol, and both are
+manifests the project adds to its own `deploy/`, not something the platform sets up:
+
+- **HTTP/HTTPS** — an `Ingress` on the shared `ingress-nginx` controller (`ingressClassName:
+  nginx`), same as every platform component (argocd, vault, mihomo, …):
+
+  ```yaml
+  apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    name: <app>
+  spec:
+    ingressClassName: nginx
+    rules:
+      - host: <app>.infra.sonar-corp.ru   # needs an A-record in FreeIPA pointing at .106
+        http:
+          paths:
+            - path: /
+              pathType: Prefix
+              backend:
+                service: { name: <app>, port: { name: http } }
+  ```
+
+  No `tls:` block is needed — leaving it unset makes ingress-nginx serve its own self-signed
+  cert on 443 (one browser warning, same as argocd/vault/keycloak). Like every
+  `*.infra.sonar-corp.ru` host, this is VPN-only; outside the VPN the public wildcard DNS answers
+  instead and the request goes nowhere (see the debug skill's Step 0).
+
+- **Any other TCP/UDP protocol** — ingress-nginx doesn't proxy plain TCP, so use a `LoadBalancer`
+  `Service` instead and let MetalLB hand it an address from the pool. Free pool addresses:
+  `.108`, `.114`, `.117`, `.118` (see the root `README.md`'s "Адресация" table for the current
+  list — check it's still accurate, addresses get claimed over time). A plain `LoadBalancer`
+  Service with no `loadBalancerIP` picks the next free one automatically:
+
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: <app>-external
+  spec:
+    type: LoadBalancer
+    selector: { app: <app> }
+    ports:
+      - port: <port>
+        targetPort: <port>
+  ```
+
+  Only pin a specific address (`metallb.io/loadBalancerIPs`) and share it with an existing one
+  (`metallb.io/allow-shared-ip`, matching annotation on both `Service`s, ports must not collide)
+  if there's a real reason to reuse an existing IP/DNS name instead of getting a fresh one — see
+  `platform/mihomo/service-external.yaml` in the `infra` repo for a worked example (mihomo's proxy
+  port shares `.106` with ingress-nginx rather than taking its own address). For a new project,
+  the plain pool-address form above is simpler and is the default choice.
 
 ## What to do next
 

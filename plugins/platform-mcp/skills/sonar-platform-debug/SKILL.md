@@ -1,6 +1,6 @@
 ---
 name: sonar-platform-debug
-description: How to debug and troubleshoot problems on the sonar-prod Kubernetes platform — Argo CD apps stuck OutOfSync/Degraded/Missing, pods crashlooping or Pending, secrets not showing up in pods, or the platform-mcp Argo CD/Vault tools erroring or timing out. Use whenever the user reports something broken or unexpected on sonar-prod: "my app isn't syncing", "pod won't start", "deploy is stuck", "can't reach argocd.infra.sonar-corp.ru", "vault_exec keeps failing", or similar. Covers the platform-specific gotchas (VPN/DNS, node naming, local storage) that generic Kubernetes debugging knowledge won't catch.
+description: How to debug and troubleshoot problems on the sonar-prod Kubernetes platform — Argo CD apps stuck OutOfSync/Degraded/Missing, pods crashlooping or Pending, secrets not showing up in pods, outbound internet/HTTP requests failing from pods, or the platform-mcp Argo CD/Vault tools erroring or timing out. Use whenever the user reports something broken or unexpected on sonar-prod: "my app isn't syncing", "pod won't start", "deploy is stuck", "can't reach argocd.infra.sonar-corp.ru", "vault_exec keeps failing", "pod can't reach the internet", "how do I set up a proxy for my app", or similar. Covers the platform-specific gotchas (VPN/DNS, node naming, local storage, outbound proxy) that generic Kubernetes debugging knowledge won't catch.
 ---
 
 # Debugging on sonar-prod
@@ -84,6 +84,34 @@ Check, in the project's `deploy/` manifests:
 - The namespace actually has the `vault.sonar-corp.ru/project` label — this gets applied
   automatically on first sync, so an app that's never synced successfully won't have it yet,
   which blocks Vault auth in a way that looks unrelated to sync status.
+
+## Outbound internet access goes through the mihomo proxy
+
+Pods on sonar-prod have no direct route to the internet — outbound HTTP/SOCKS5 traffic goes
+through `mihomo`, a fault-tolerant proxy client with two VPN subscriptions and automatic failover
+between them (`url-test` picks the lowest-latency node within a subscription, `fallback` switches
+subscription entirely if every node in the primary one stops responding).
+
+- **In-cluster apps**: point `HTTP_PROXY`/`ALL_PROXY` at
+  `http://mihomo.infra.sonar-corp.ru:7890` (mixed port, serves both SOCKS5 and HTTP) — use the
+  external DNS name, not `mihomo.mihomo.svc.cluster.local`, so the same address works both from
+  pods and from a VPN-connected console. Always set `NO_PROXY`/`no_proxy` to include
+  `.svc.cluster.local,.cluster.local,10.0.0.0/8,192.168.88.0/24` — otherwise in-cluster and
+  VPN-internal traffic gets routed through the proxy too, which usually just times out. See the
+  Alertmanager config in `platform/kube-prometheus-stack/values.yaml` in the `infra` repo for a
+  worked example.
+- **From the console (VPN)**: the same port is reachable directly, no in-cluster hop needed —
+  `curl -x http://mihomo.infra.sonar-corp.ru:7890 https://ifconfig.me`. Like everything else on
+  `*.infra.sonar-corp.ru`, this only works over VPN (see Step 0 above) — outside it you get the
+  same silent-timeout failure mode as argocd/vault.
+- **Dashboard**: `https://mihomo.infra.sonar-corp.ru` (metacubexd) shows which node/subscription is
+  currently active and lets you manually pin a different one — useful when diagnosing "outbound
+  requests are slow/failing" reports, since a bad upstream VPN node looks identical to an app bug
+  from inside the pod. No login (VPN is the only access boundary, by design).
+- **Quick health check**: `kubectl -n mihomo exec deploy/mihomo -c mihomo -- curl -sf
+  http://127.0.0.1:9090/version`. If pods report "can't reach the internet" but this succeeds, the
+  problem is almost always a missing/wrong `HTTP_PROXY`/`ALL_PROXY` env var on the app itself, not
+  mihomo.
 
 ## Secret values are redacted on purpose
 
