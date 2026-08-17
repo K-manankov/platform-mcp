@@ -130,9 +130,13 @@ issue, not something to fix from the project side.
 
 ## Outbound internet access
 
-Pods have no direct route to the internet — there's no default egress path out of the cluster.
-Any app that needs to call an external API, download a package at runtime, etc. must be pointed at
-the `mihomo` proxy explicitly:
+Pods reach the internet **directly** — calling an external API, downloading a package at runtime,
+etc. works out of the box, with no proxy configuration and nothing to request from the platform
+team.
+
+The exception is resources unreachable from Russia (blocked here, or geo-restricted against
+Russian exit addresses). Only an app that needs *those* has to be pointed at the `mihomo` proxy
+explicitly:
 
 ```yaml
 env:
@@ -144,12 +148,13 @@ env:
     value: .svc.cluster.local,.cluster.local,10.0.0.0/8,192.168.88.0/24
 ```
 
-The `NO_PROXY` entry matters — without it, in-cluster service calls and calls to other
-`*.infra.sonar-corp.ru` platform hosts get routed through the proxy too and typically just time
-out. This is a per-app manifest change in the project's own `deploy/` directory, not something the
-platform sets up automatically. See the **debug** skill's "Outbound internet access goes through
-the mihomo proxy" section for the failover/dashboard details and how to tell a proxy misconfig
-apart from an actual app bug.
+Don't add these env vars "just in case": routing ordinary traffic through mihomo makes it slower
+and adds a shared dependency for no gain. When they are needed, the `NO_PROXY` entry matters —
+without it, in-cluster service calls and calls to other `*.infra.sonar-corp.ru` platform hosts get
+routed through the proxy too and typically just time out. This is a per-app manifest change in the
+project's own `deploy/` directory, not something the platform sets up automatically. See the
+**debug** skill's "Outbound internet works directly; mihomo is only for blocked resources" section
+for the failover/dashboard details and how to tell a proxy misconfig apart from an actual app bug.
 
 ## Exposing a port
 

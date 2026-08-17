@@ -113,14 +113,20 @@ These objects live in `deploy/overlays/<env>/`, not `base/`. Check, in that over
   automatically on first sync, so an app that's never synced successfully won't have it yet,
   which blocks Vault auth in a way that looks unrelated to sync status.
 
-## Outbound internet access goes through the mihomo proxy
+## Outbound internet works directly; mihomo is only for blocked resources
 
-Pods on sonar-prod have no direct route to the internet — outbound HTTP/SOCKS5 traffic goes
-through `mihomo`, a fault-tolerant proxy client with two VPN subscriptions and automatic failover
-between them (`url-test` picks the lowest-latency node within a subscription, `fallback` switches
-subscription entirely if every node in the primary one stops responding).
+Pods on sonar-prod reach the internet **directly** — there is a normal egress path out of the
+cluster and no proxy env vars are needed for ordinary outbound calls. The `mihomo` proxy exists
+for one narrower case: resources unreachable from Russia (blocked here, or geo-restricted against
+Russian exit addresses). It's a fault-tolerant proxy client with two VPN subscriptions and
+automatic failover between them (`url-test` picks the lowest-latency node within a subscription,
+`fallback` switches subscription entirely if every node in the primary one stops responding).
 
-- **In-cluster apps**: point `HTTP_PROXY`/`ALL_PROXY` at
+So when a pod reports "can't reach the internet", don't assume a missing `HTTP_PROXY` — first
+check whether the destination is actually blocked. If it isn't, the failure is DNS, NetworkPolicy,
+the remote endpoint, or the app itself, and adding proxy env vars will only move the problem.
+
+- **In-cluster apps needing a blocked resource**: point `HTTP_PROXY`/`ALL_PROXY` at
   `http://mihomo.infra.sonar-corp.ru:7890` (mixed port, serves both SOCKS5 and HTTP) — use the
   external DNS name, not `mihomo.mihomo.svc.cluster.local`, so the same address works both from
   pods and from a VPN-connected console. Always set `NO_PROXY`/`no_proxy` to include
@@ -137,9 +143,9 @@ subscription entirely if every node in the primary one stops responding).
   requests are slow/failing" reports, since a bad upstream VPN node looks identical to an app bug
   from inside the pod. No login (VPN is the only access boundary, by design).
 - **Quick health check**: `kubectl -n mihomo exec deploy/mihomo -c mihomo -- curl -sf
-  http://127.0.0.1:9090/version`. If pods report "can't reach the internet" but this succeeds, the
+  http://127.0.0.1:9090/version`. If a pod can't reach a *blocked* resource but this succeeds, the
   problem is almost always a missing/wrong `HTTP_PROXY`/`ALL_PROXY` env var on the app itself, not
-  mihomo.
+  mihomo. For a resource that isn't blocked, mihomo is irrelevant to the diagnosis either way.
 
 ## Secret values are redacted on purpose
 
