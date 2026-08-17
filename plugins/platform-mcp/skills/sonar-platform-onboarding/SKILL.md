@@ -24,60 +24,109 @@ lives in GitLab:
 1. **Create the GitLab subgroup** `k8s-projects/<project>`, and add members with the right roles.
    Role matters for Argo CD permissions later: Developer/Maintainer/Owner get sync/update/
    delete/create rights on the project's own apps; Reporter/Guest get view + logs only.
-2. **Add a repo under that subgroup with a `deploy/` directory at its root.** This is usually a
-   dedicated "deploy" repo (separate from application source), but it can be any repo — the only
-   requirement Argo CD checks for is the existence of `deploy/` at repo root. Put raw Kubernetes
-   manifests under `deploy/`; Argo CD recurses over everything in there (no fixed Helm/kustomize
-   convention required).
+2. **Add a repo under that subgroup with a `deploy/overlays/` directory at its root.** This is
+   usually a dedicated "deploy" repo (separate from application source), but it can be any repo —
+   the marker Argo CD looks for is `deploy/overlays/` specifically, not a flat `deploy/`. A repo
+   with manifests directly in `deploy/` is *not* picked up, by design: the Application path is
+   `deploy/overlays/<env>`, and a flat layout would produce Applications pointing at nothing.
+
+   The expected layout is a Kustomize base plus one overlay per environment — copy
+   `examples/kustomize-project` from the `infra` repo as the starting point:
+
+   ```
+   deploy/
+     base/                  full manifests, once
+     overlays/test/         only the diff: replicas, resources, image tag, secrets
+     overlays/prod/
+   ```
+
+   Argo CD auto-detects the tool from the overlay's contents: a `kustomization.yaml` means
+   Kustomize, otherwise the flat manifests in that one directory (no recursion into
+   subdirectories). Don't set `source.directory` anywhere — that forces the Directory source type,
+   and `kustomization.yaml` then gets applied as a literal manifest, failing with a confusing
+   "could not find kustomize.config.k8s.io/Kustomization ... make sure the CRD is installed".
+   There is no such CRD and never will be.
 
 That's it. Nothing is applied to the cluster by hand and no manifest needs to be copied into the
 `infra` repo.
+
+### Hard contract for the overlays
+
+The namespace is shared by both environments and by every service in the project, so names are the
+only thing keeping them apart. All three of these are mandatory, and skipping one fails in a way
+that looks like a platform bug:
+
+- **`nameSuffix: -<env>` in every overlay.** Without it both Applications claim the same object,
+  and since both run `prune` + `selfHeal`, they overwrite each other indefinitely.
+- **`includeSelectors: true` on the environment label.** Without it the Service selector stays
+  identical across environments, and test's Service starts balancing onto prod's pods — names
+  differ, labels don't.
+- **Distinct names for distinct services.** The shared namespace no longer separates them, so
+  `myapp` and `worker` must be two names, not two directories.
+
+An environment listed by the platform but missing its `overlays/<env>` directory makes that
+Application fail with `ComparisonError` — loudly, rather than being skipped silently.
 
 ## What happens automatically
 
 The platform scans GitLab every ~3 minutes and reacts to what it finds:
 
-- One Argo CD `AppProject` gets created per GitLab subgroup, named after the project, scoped so
-  the project can only manage resources in namespaces `<project>-*`. RBAC on it mirrors the
-  GitLab subgroup roles (see above).
+- One Argo CD `AppProject` gets created per GitLab subgroup, named after the project. RBAC on it
+  mirrors the GitLab subgroup roles (see above).
 - One Vault group + KV access gets created for the subgroup, scoped to `kv/projects/<project>/*`
   — see the secrets skill for how to actually use it.
-- One Argo CD `Application` gets created **per repo that has a `deploy/` directory**, named and
-  namespaced `<project>-<repo>`. The namespace is created automatically on first sync
-  (`CreateNamespace=true`) and gets labeled `vault.sonar-corp.ru/project: <project>` — this label
-  is what scopes the project's Vault access to exactly its own namespaces, and it can't be forged
-  from the deploy repo since the label is applied by the platform, not read from it.
+- One Argo CD `Application` gets created **per (repo, environment) pair** — so a repo with
+  `deploy/overlays/` yields two: `<project>-<repo>-test` and `<project>-<repo>-prod`.
+- **One namespace per project**, named `<project>` — not per repo and not per environment. It's
+  created automatically on first sync (`CreateNamespace=true`) and labeled
+  `vault.sonar-corp.ru/project: <project>`, which is what scopes the project's Vault access. The
+  label can't be forged from the deploy repo: the platform applies it rather than reading it.
 
-If a project has multiple microservices, each with its own repo, each repo gets its own
-`Application` and namespace as long as it has a `deploy/` directory — there's no single
-"monorepo" requirement.
+If a project has multiple microservices, each with its own repo, each repo gets its own pair of
+`Application`s — but they all land in the same `<project>` namespace. There's no monorepo
+requirement, and no per-service namespace either.
+
+Adding a *new environment* is not a project-side change: it takes three edits, two of which are in
+the `infra` repo (`clusters/sonar-prod/apps/projects.yaml` list element, the `vault-<env>`
+ServiceAccount name in `platform/project-tenant/templates/vault.yaml`) plus the overlay directory
+in every deploy repo. Direct users there rather than suggesting they can add one themselves.
 
 ## Files that only exist as reference, not as something to copy verbatim
 
-The `infra` repo's `examples/` directory (`appproject-project.yaml`, `vault-project.yaml`) shows
-what the platform generates for a project named `demo` — they're explicitly documented as
-"human-readable contract, not a working manifest" (they're templated by the `project-tenant` Helm
-chart, not applied directly). Don't suggest copying them into `infra/`. The one example file that
-**is** meant to be copied is `examples/externalsecret-project.yaml`, and it goes into the
-project's own `deploy/` directory — see the secrets skill.
+The `infra` repo's `examples/` directory mixes two kinds of file, and confusing them wastes time:
+
+- **Reference only** — `appproject-project.yaml`, `vault-project.yaml`. These show what the
+  platform generates for a project named `demo`; they're explicitly documented as
+  "human-readable contract, not a working manifest" (templated by the `project-tenant` Helm chart,
+  not applied directly). Don't suggest copying them anywhere.
+- **Meant to be copied into the project's own repo** — `examples/kustomize-project` (the whole
+  `deploy/` skeleton, the starting point for onboarding), `examples/externalsecret-project.yaml`
+  (see the secrets skill), `examples/keycloak-project.yaml` (see the keycloak skill), and
+  `examples/ci` (GitLab CI templates, `include`d into the *service* repo rather than copied —
+  see the deploy skill).
 
 ## Verifying onboarding worked
 
-After creating the subgroup + `deploy/` repo, wait a few minutes for the scan, then check with
+After creating the subgroup + deploy repo, wait a few minutes for the scan, then check with
 `platform-mcp`'s Argo CD tools (requires `argocd_login` first if not already authenticated — check
 with `argocd_auth_status`):
 
 ```
-argocd_exec { "args": ["proj", "get", "<project>"] }              # AppProject exists?
-argocd_exec { "args": ["app", "list", "-o", "json"] }              # look for <project>-<repo>
-argocd_exec { "args": ["app", "get", "<project>-<repo>"] }         # sync/health status, once it appears
+argocd_exec { "args": ["proj", "get", "<project>"] }                  # AppProject exists?
+argocd_exec { "args": ["app", "list", "-o", "json"] }                  # expect TWO apps per repo
+argocd_exec { "args": ["app", "get", "<project>-<repo>-test"] }        # sync/health, once it appears
 ```
 
-If the `Application` doesn't show up after ~5 minutes, the most common causes are: `deploy/` isn't
-actually at the repo root, the repo isn't under `k8s-projects/<project>` (a subgroup one level
-deeper won't match), or Argo CD's clone credential (a deploy token scoped to the whole
-`k8s-projects` group) doesn't have access — that's a platform-team-side issue, not something to
-fix from the project side.
+Expect **two** Applications per repo (`-test` and `-prod`). Seeing only one, or neither, is the
+signal something's off.
+
+If the `Application`s don't show up after ~5 minutes, the most common causes are: the directory is
+`deploy/` without `overlays/` underneath (the marker is `deploy/overlays/`), it isn't at the repo
+root, the repo sits directly in `k8s-projects` instead of inside a `k8s-projects/<project>`
+subgroup (that yields `project: k8s-projects`, which doesn't exist, and the Application fails
+loudly — that's the contract check working), or Argo CD's clone credential (a deploy token scoped
+to the whole `k8s-projects` group) doesn't have access — that last one is a platform-team-side
+issue, not something to fix from the project side.
 
 ## Outbound internet access
 

@@ -4,12 +4,12 @@
     {
       "id": 1,
       "prompt": "Как мне добавить пароль от базы для приложения billing-api в проекте payments, чтобы он попал в под приложения на sonar-prod?",
-      "expected_output": "Gives the vault_exec kv put command with the correct path convention (kv/projects/payments/billing-api), explains this needs an ExternalSecret + SecretStore + a ServiceAccount named exactly 'vault' copied into the project's own deploy/ directory (from infra/examples/externalsecret-project.yaml), and that it ships via the normal GitOps merge flow rather than being applied by hand. Should not suggest putting the secret value directly into a Kubernetes manifest or committing it to Git.",
+      "expected_output": "Gives the vault_exec kv put command with the correct path convention including the trailing environment segment (kv/projects/payments/billing-api/test, not kv/projects/payments/billing-api). Explains this needs an ExternalSecret + SecretStore + ServiceAccount placed in the project's own deploy/overlays/<env>/ directory (not base/), adapted from examples/kustomize-project, and that it ships via the normal GitOps merge flow rather than being applied by hand. Bonus for warning that nameSuffix does not rewrite cross-references, so serviceAccountRef.name, secretStoreRef.name and target.name need the -test/-prod suffix written out by hand. Should not suggest putting the secret value into a Kubernetes manifest or committing it to Git, and should not claim the /<env> segment isolates test from prod.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "I ran vault_exec with kv get on kv/projects/payments/billing-api and it shows the key names but no values. Is the secret broken or empty?",
+      "prompt": "I ran vault_exec with kv get on kv/projects/payments/billing-api/test and it shows the key names but no values. Is the secret broken or empty?",
       "expected_output": "Explains this is expected, intentional redaction behavior by the platform-mcp plugin (not a broken/empty secret), and that -field=/-format=table workarounds are deliberately rejected. Mentions the PLATFORM_MCP_ALLOW_SECRET_VALUES opt-in exists but frames it as a deliberate session-level choice, not a quick fix, and suggests checking the value directly in the Vault UI as the default path.",
       "files": []
     }

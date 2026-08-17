@@ -23,24 +23,42 @@ a disproportionate share of "nothing works" reports and don't look like what the
 
 ## Diagnosing a stuck or unhealthy Argo CD app
 
+App names carry the environment: `<project>-<repo>-test` / `<project>-<repo>-prod`. There is no
+Application without the suffix, so a command using the bare `<project>-<repo>` matches nothing.
+The namespace, by contrast, is just `<project>` — shared by both environments and every service.
+
 ```
-argocd_exec { "args": ["app", "get", "<project>-<repo>"] }
+argocd_exec { "args": ["app", "get", "<project>-<repo>-<env>"] }
     # sync status (Synced/OutOfSync), health (Healthy/Degraded/Progressing/Missing),
     # per-resource state, recent sync history — start here
 
-argocd_exec { "args": ["app", "logs", "<project>-<repo>"] }
+argocd_exec { "args": ["app", "logs", "<project>-<repo>-<env>"] }
     # container logs snapshot. --follow is blocked by the plugin (it never terminates) —
     # fetch a snapshot, re-run if you need fresher output rather than trying to stream
 
-argocd_exec { "args": ["app", "resources", "<project>-<repo>"] }
+argocd_exec { "args": ["app", "resources", "<project>-<repo>-<env>"] }
     # per-resource sync/health breakdown, useful to isolate which specific object is unhappy
+
+argocd_exec { "args": ["app", "list", "-l", "sonar-corp.ru/environment=prod"] }
+    # environment lives on the Application's labels, never on the namespace
 ```
 
 Common platform-specific causes, roughly in order of how often they bite:
 
 - **App not appearing at all yet.** The `k8s-projects` scan runs every ~3 minutes; a brand-new
-  repo or a newly-added `deploy/` directory needs to wait for that cycle. See the onboarding skill
-  if this is a first-time setup, not an existing app.
+  repo or a newly-added `deploy/overlays/` directory needs to wait for that cycle. See the
+  onboarding skill if this is a first-time setup, not an existing app.
+- **`ComparisonError` on one environment only.** The overlay directory for that environment
+  doesn't exist. Environments are enumerated platform-side, so a repo with only
+  `overlays/test` still gets a `-prod` Application, and it fails loudly rather than being skipped.
+- **Two environments fighting over the same object** — resources flipping between Synced and
+  OutOfSync, or fields reverting seconds after a sync. The overlay is missing `nameSuffix: -<env>`,
+  so both Applications claim the same object and, with `prune` + `selfHeal` on both, overwrite each
+  other indefinitely. Same root cause if a Service in test is routing to prod pods: that's the
+  environment label missing `includeSelectors: true`.
+- **`could not find kustomize.config.k8s.io/Kustomization ... make sure the CRD is installed`.**
+  Nothing to install — this means `source.directory` got set somewhere, forcing the Directory
+  source type so `kustomization.yaml` is applied as a literal manifest instead of being built.
 - **Node selector using the short hostname.** Node names in this cluster are full FQDNs
   (`k8s-worker-01.infra.sonar-corp.ru`), because that's how they joined the cluster, and
   `kubernetes.io/hostname` holds the FQDN. A `nodeSelector` with the short name
@@ -49,8 +67,9 @@ Common platform-specific causes, roughly in order of how often they bite:
   volume is a directory on whichever node the pod first landed on. A pod that needs its existing
   volume can't reschedule to a different node, and `reclaimPolicy: Retain` means a deleted PVC
   doesn't free the data either — freeing it is a manual step.
-- **Missing/misplaced `deploy/` directory**, or manifests that reference the wrong namespace —
-  namespace is always `<project>-<repo>`, not something set independently in the manifests.
+- **Missing/misplaced `deploy/overlays/` directory** (the marker is `overlays/`, not a flat
+  `deploy/`), or manifests that hard-code a namespace — the namespace is always `<project>`,
+  supplied by the Application, and shouldn't be set in the manifests at all.
 
 ## Vault-side debugging
 
@@ -63,9 +82,10 @@ vault_exec { "args": ["kv", "list", "kv/projects/<project>"] }
     # what secrets exist under the project. Exit code 2 here usually means "empty path or no
     # list ACL" — it does NOT mean "wrong mount", don't go hunting for alternate mount paths
 
-vault_exec { "args": ["kv", "get", "kv/projects/<project>/<app>"] }
+vault_exec { "args": ["kv", "get", "kv/projects/<project>/<app>/<env>"] }
     # read one secret's metadata + keys (values are redacted from the tool response by design —
-    # see below, this is not a bug or something to work around)
+    # see below, this is not a bug or something to work around). Note the trailing environment
+    # segment: kv/projects/demo/myapp is the parent, not the secret
 ```
 
 Avoid `sys/mounts` for discovery — normal OIDC users usually get a 403 on it, which looks like a
@@ -73,14 +93,22 @@ broken setup but is just a permissions boundary that doesn't apply to `kv/`.
 
 ## If an `ExternalSecret` isn't producing a k8s `Secret`
 
-Check, in the project's `deploy/` manifests:
+These objects live in `deploy/overlays/<env>/`, not `base/`. Check, in that overlay:
 
-- The `SecretStore`'s `spec.provider.vault.auth.kubernetes.role` matches the project name exactly.
-- The `ExternalSecret`'s `dataFrom.extract.key` matches `projects/<project>/<app>` exactly
-  (note: no `kv/` prefix inside this field — that's implied by the `SecretStore`'s `path: kv`).
-- The `ServiceAccount` used is named **exactly** `vault` — that literal name is hard-coded into
-  the Vault Kubernetes-auth role the platform generated for the project; a differently-named
-  ServiceAccount will authenticate as nobody.
+- The `SecretStore`'s `spec.provider.vault.auth.kubernetes.role` matches the project name exactly
+  (the role is per-project — the environment does not appear in it).
+- The `ExternalSecret`'s `dataFrom.extract.key` matches `projects/<project>/<app>/<env>` exactly,
+  environment segment included (no `kv/` prefix inside this field — that's implied by the
+  `SecretStore`'s `path: kv`).
+- The `ServiceAccount` resolves to one of `vault`, `vault-test`, `vault-prod` — those three names
+  are listed literally in the project's Vault Kubernetes-auth role, because
+  `bound_service_account_names` doesn't do prefix globs. Any other name authenticates as nobody.
+- **The cross-references carry the environment suffix by hand.** `nameSuffix` renames objects but
+  cannot rewrite references inside CRDs, so `SecretStore.serviceAccountRef.name`,
+  `ExternalSecret.secretStoreRef.name` and `ExternalSecret.target.name` must each spell out
+  `-test`/`-prod` themselves. This is the most common failure in this section. A missed suffix on
+  `target.name` is the sneakiest: it doesn't error, it just makes both environments generate one
+  shared `Secret` and overwrite it in turn.
 - The namespace actually has the `vault.sonar-corp.ru/project` label — this gets applied
   automatically on first sync, so an app that's never synced successfully won't have it yet,
   which blocks Vault auth in a way that looks unrelated to sync status.

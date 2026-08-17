@@ -11,15 +11,22 @@ not encrypted-in-Git (SOPS/Sealed Secrets aren't used here). Access needs VPN an
 
 ## Path convention
 
-Every project's secrets live under `kv/projects/<project>/<app>` — one path per app within the
-project's subtree. A GitLab subgroup's members automatically get read+write on their own
-`kv/projects/<project>/*` and nothing outside it (`kv/infra/*` and other projects' subtrees are
-denied by the plugin's policy, separate from Vault's own ACLs).
+Every project's secrets live under `kv/projects/<project>/<app>/<env>` — the environment
+(`test` / `prod`) is the **last path segment**, not part of the app name. A GitLab subgroup's
+members automatically get read+write on their own `kv/projects/<project>/*` and nothing outside it
+(`kv/infra/*` and other projects' subtrees are denied by the plugin's policy, separate from Vault's
+own ACLs).
+
+**The environment is layout, not a permission boundary.** The project's Vault policy is a single
+`kv/data/projects/<project>/*` rule, and `*` expands to the end of the path — so whoever can read
+test secrets can read prod secrets. This is a deliberate platform decision. Don't describe the
+`/<env>` segment as isolation, and don't propose per-environment Vault policies as if they were a
+config toggle; changing that is an `infra` MR against `platform/project-tenant`.
 
 ## Writing a secret — mechanics
 
 ```
-vault_exec { "args": ["kv", "put", "kv/projects/<project>/<app>", "DB_PASSWORD=...", "API_TOKEN=..."] }
+vault_exec { "args": ["kv", "put", "kv/projects/<project>/<app>/<env>", "DB_PASSWORD=...", "API_TOKEN=..."] }
 ```
 
 This is a mutating command — confirm with the user before calling it (the tool will also prompt
@@ -41,7 +48,7 @@ it in any file you write outside of the one `vault_exec` call itself.
 vault_exec { "args": ["kv", "list", "kv/projects/<project>"] }
     # see what app paths exist, without reading any values
 
-vault_exec { "args": ["kv", "get", "kv/projects/<project>/<app>"] }
+vault_exec { "args": ["kv", "get", "kv/projects/<project>/<app>/<env>"] }
     # metadata + key names for one secret — VALUES ARE REDACTED from the tool's response
 ```
 
@@ -63,13 +70,13 @@ Generate a strong random value yourself (e.g. via `openssl rand -base64 32` or s
 invent a "memorable" or low-entropy value), then write it directly:
 
 ```
-vault_exec { "args": ["kv", "put", "kv/projects/<project>/<app>", "DB_PASSWORD=<generated-value>"] }
+vault_exec { "args": ["kv", "put", "kv/projects/<project>/<app>/<env>", "DB_PASSWORD=<generated-value>"] }
 ```
 
 Confirm with the user *what* you're about to generate and store (key name, path, purpose) before
 running it — they should approve the action, but they don't need to see or choose the value itself
 for something like a DB password or internal signing key. After writing, tell the user it's done
-and where it lives (`kv/projects/<project>/<app>`, key name) rather than repeating the value back —
+and where it lives (`kv/projects/<project>/<app>/<env>`, key name) rather than repeating the value back —
 there's no reason for a generated value to appear twice in the conversation. Point them at the
 Vault UI if they need to see it later. This flow is most common right after onboarding a new app,
 before its first deploy, or when rotating a credential the app owns end-to-end (nothing external
@@ -82,7 +89,7 @@ you specifically to store — a Stripe key, a partner's API token, etc. Use it i
 `vault_exec` call and don't do anything else with it: don't write it to a scratch file, don't
 repeat it in your response, don't include it in a summary or commit message. If the user pastes
 the value directly into chat, that's their call to make, but you shouldn't ask them to do that when
-avoidable — for a single value, confirming "write `<KEY_NAME>` to `kv/projects/<project>/<app>`?"
+avoidable — for a single value, confirming "write `<KEY_NAME>` to `kv/projects/<project>/<app>/<env>`?"
 without echoing the value back is enough. Once written, verify success with `kv get` (which will
 correctly show the key name with the value redacted) rather than by re-reading the value.
 
@@ -98,7 +105,7 @@ config in scenario 1/2 above.
 Once opted in:
 
 ```
-vault_exec { "args": ["kv", "get", "kv/projects/<project>/<app>"] }
+vault_exec { "args": ["kv", "get", "kv/projects/<project>/<app>/<env>"] }
 ```
 
 will return real values. Write them straight into the target file (e.g. `.env`, `.envrc`) rather
@@ -112,26 +119,40 @@ exposure is limited to that person's own machine, not written back to any shared
 
 ## Getting a secret into a running pod
 
-Applications never talk to Vault directly. Instead, the project's `deploy/` directory (in its own
-GitLab repo — never in `infra`) gets a copy of the `externalsecret-project.yaml` template from the
-`infra` repo's `examples/` directory, which defines three objects:
+Applications never talk to Vault directly. Instead, these three objects go into the project's own
+GitLab repo (never `infra`), **inside `deploy/overlays/<env>/` — not `base/`**. They belong in the
+overlay because test and prod differ in every field that matters: different KV paths, different
+Secret names, different ServiceAccount names. The worked example is
+`examples/kustomize-project/overlays/test/externalsecret.yaml`; the annotated walkthrough of what
+each object does is `examples/externalsecret-project.yaml`.
 
-1. A `ServiceAccount` named **exactly** `vault` — this literal name is hard-coded into the Vault
-   Kubernetes-auth role the platform generates per project, so renaming it silently breaks auth.
-   It carries no Kubernetes RBAC of its own; it exists purely as Vault's identity check.
+1. A `ServiceAccount` named `vault` in the manifest — the overlay's `nameSuffix` turns it into
+   `vault-test` / `vault-prod`. The Vault Kubernetes-auth role lists all three names literally
+   (`vault`, `vault-test`, `vault-prod`) because `bound_service_account_names` doesn't understand
+   prefix globs. Any *other* name authenticates as nobody. The SA carries no Kubernetes RBAC of
+   its own; it exists purely as Vault's identity check.
 2. A namespaced `SecretStore` pointing at Vault, with `auth.kubernetes.role` set to the project
-   name.
-3. An `ExternalSecret` with `dataFrom.extract.key: projects/<project>/<app>` (matching the
+   name — the role is per-project, the environment does not appear in it.
+3. An `ExternalSecret` with `dataFrom.extract.key: projects/<project>/<app>/<env>` (matching the
    `vault kv put` path above, without the `kv/` prefix — that's implied by the store's `path: kv`),
-   producing a normal Kubernetes `Secret` that the app consumes the usual way
-   (`envFrom.secretRef`).
+   producing a normal Kubernetes `Secret` the app consumes as usual (`envFrom.secretRef`).
 
-Only three things typically need editing when adapting the template: the `role` (project name),
-the `extract.key` (project/app), and the target `Secret` name — everything else can stay as-is.
-Once merged (see the **deploy** skill for the GitOps flow), External Secrets Operator polls Vault
-on the `ExternalSecret`'s `refreshInterval` and keeps the `Secret` in sync. Note a changed secret
-value updates the `Secret` object but does **not** restart pods automatically — an app that only
-reads env vars at startup needs a rollout restart to pick up a rotated value.
+**Kustomize rewrites resource names but not references between them.** `nameSuffix` renames the
+objects; it cannot touch fields inside CRDs it knows nothing about. So these must carry the suffix
+written out by hand, and forgetting one is the single most common breakage here:
+
+- `SecretStore` → `serviceAccountRef.name: vault-test`
+- `ExternalSecret` → `secretStoreRef.name: vault-test`
+- `ExternalSecret` → `target.name: myapp-test` — this is the name of the *generated* `Secret`, not
+  a resource name, so `nameSuffix` never touches it. Leave it unsuffixed and both environments
+  produce one shared `Secret` that they overwrite in turn.
+
+Adapting the template usually means editing: the `role` (project name), the `extract.key`
+(`projects/<project>/<app>/<env>`), the target `Secret` name, and the three hand-written suffixes
+above. Once merged (see the **deploy** skill for the GitOps flow), External Secrets Operator polls
+Vault on the `ExternalSecret`'s `refreshInterval` and keeps the `Secret` in sync. Note a changed
+secret value updates the `Secret` object but does **not** restart pods automatically — an app that
+only reads env vars at startup needs a rollout restart to pick up a rotated value.
 
 ## CI pipeline access (GitLab CI, not a deployed pod)
 
@@ -146,13 +167,18 @@ deploy:
   script:
     - export VAULT_ADDR=https://vault.infra.sonar-corp.ru
     - export VAULT_TOKEN="$(vault write -field=token auth/gitlab-ci/login role=<project> jwt=$VAULT_ID_TOKEN)"
-    - vault kv get -field=DB_PASSWORD kv/projects/<project>/<app>
+    - vault kv get -field=DB_PASSWORD kv/projects/<project>/<app>/<env>
 ```
 
 This runs inside the pipeline's own `vault` CLI, not through `platform-mcp` — the plugin's tools
 are for interactive/agent use against the logged-in developer's own session, not for wiring into
 CI. The role (`<project>`) here is provisioned by the same onboarding automation as the KV path —
 see the onboarding skill.
+
+Note this is for a pipeline that needs a secret *value* at build time. It is **not** how deploys
+get their secrets (that's the `ExternalSecret` above, at runtime), and it's not needed by the
+platform's CI templates (`examples/ci`) — those only build an image and commit an image tag, and
+authenticate to the registry and the deploy repo with GitLab's own tokens.
 
 ## Out of scope for a project
 
