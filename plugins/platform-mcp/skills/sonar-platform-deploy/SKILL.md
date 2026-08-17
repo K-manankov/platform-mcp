@@ -1,6 +1,6 @@
 ---
 name: sonar-platform-deploy
-description: How to deploy, release, promote to prod, sync, or roll back a project running on the sonar-prod Kubernetes platform (Argo CD, GitOps, via the platform-mcp plugin's argocd_exec tool). Use whenever the user wants to ship a change to sonar-prod, promote a build from test to prod, trigger an Argo CD sync, check whether a deploy went out, see an app's rollout/sync/health status, roll back a release, or asks things like "why hasn't my change shown up in the cluster" or "how do I release a new version." This is the GitOps flow — there is no manual kubectl apply on this platform.
+description: How to deploy, release, promote to prod, sync, or roll back a project running on the sonar-prod Kubernetes platform (Argo CD, GitOps, via the platform-mcp plugin's argocd_exec tool). Use whenever the user wants to ship a change to sonar-prod, promote a build from test to prod, trigger an Argo CD sync, check whether a deploy went out, see an app's rollout/sync/health status, roll back a release, or asks things like "why hasn't my change shown up in the cluster" or "how do I release a new version." Also covers wiring up the platform's GitLab CI templates in a service repo — the `.gitlab-ci.yml` include, the `DEPLOY_REPO`/`IMAGE`/`BUILD_CONTEXT` variables, and the `DEPLOY_PUSH_TOKEN` write credential the deploy job needs. This is the GitOps flow — there is no manual kubectl apply on this platform.
 ---
 
 # Deploying on sonar-prod
@@ -49,7 +49,7 @@ exactly what's in the diff goes to prod, rather than everything that accumulated
 branch.
 
 Projects using the platform's CI templates (`examples/ci` in the `infra` repo, included into the
-*service* repo's `.gitlab-ci.yml`) get this automated:
+*service* repo's `.gitlab-ci.yml` — see **Wiring up the CI templates** below) get this automated:
 
 - Push/merge to the service repo's default branch → image built and tagged with the commit's short
   SHA → that tag committed into `deploy/overlays/test`.
@@ -68,6 +68,102 @@ the pipeline fails loudly with an explanation.
 
 Projects not using the CI templates do the same thing by hand: one MR editing `newTag` in
 `overlays/prod/kustomization.yaml`.
+
+## Wiring up the CI templates
+
+The templates live at `examples/ci/{build,deploy}.yml` in the `infra` repo
+(`infra/k8s/platform` in GitLab) and are `include`d, never copied — so projects pick up fixes
+without a re-sync. Everything needed to set them up is below; don't send the user to read the
+`infra` repo for it.
+
+The service repo's `.gitlab-ci.yml`, in full:
+
+```yaml
+include:
+  - project: infra/k8s/platform
+    ref: main
+    file:
+      - /examples/ci/build.yml
+      - /examples/ci/deploy.yml
+
+variables:
+  DEPLOY_REPO: k8s-projects/<project>/deploy
+```
+
+`DEPLOY_REPO` is the only mandatory variable; the rest comes from GitLab's built-ins. The
+templates define stages `build` and `deploy` and four jobs: `build:image` (kaniko, default branch
+only), `verify:image` (`prod` branch, checks the tag exists in the registry — never rebuilds),
+`deploy:test` (automatic) and `deploy:prod` (`when: manual`).
+
+Tunable variables, all optional:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `IMAGE` | `$CI_REGISTRY_IMAGE` | Full image name; must match `images[].name` in the overlays *literally* |
+| `IMAGE_TAG` | `$CI_COMMIT_SHORT_SHA` | Don't override — immutability is what the whole scheme rests on |
+| `DOCKERFILE` | `Dockerfile` | Relative to `BUILD_CONTEXT` |
+| `BUILD_CONTEXT` | `.` | For monorepos, e.g. `services/api` |
+| `DEPLOY_REPO_BRANCH` | `main` | The deploy repo has exactly one branch; leave it |
+| `KANIKO_IMAGE` | `gcr.io/kaniko-project/executor:v1.23.2-debug` | See below |
+| `ALPINE_IMAGE` | `alpine:3.20` | Base for the helper jobs |
+
+### The write credential (the one manual step)
+
+The deploy job pushes to a *different* repo, and `CI_JOB_TOKEN` can't do that. So:
+
+1. In the **deploy repo**: Settings → Access tokens → role `Developer`, scope `write_repository`.
+2. In the **`k8s-projects/<project>` subgroup**: Settings → CI/CD → Variables → `DEPLOY_PUSH_TOKEN`,
+   **masked**, **protected unchecked** (the service repo's `prod` branch may not be protected, and
+   a protected variable wouldn't be exposed to that job). Subgroup level, not repo level — one
+   deploy repo per project, and every service in it pushes with the same token.
+
+It must be a **project access token**, *not* a deploy token: GitLab deploy tokens have no
+`write_repository` scope at all — only `read_repository` plus the registry scopes — so they
+cannot push. If someone reports "there's no such scope in the Deploy tokens UI", that's this
+mixup. The job clones as `https://oauth2:$DEPLOY_PUSH_TOKEN@$CI_SERVER_HOST/$DEPLOY_REPO.git`,
+which is the access-token form. If the deploy repo's branch is protected, `Developer` can't push
+either — use `Maintainer`, or allow `Developer` push in Protected branches.
+
+(Argo CD's own clone credential is a different thing entirely: a read-only deploy token scoped to
+the whole `k8s-projects` group, owned by the platform team. There, a deploy token is correct.)
+
+### What the deploy job actually edits
+
+It rewrites **only** `newTag` on the `images[]` entry whose `name` matches `$IMAGE` exactly, in
+`deploy/overlays/<env>/kustomization.yaml`. If no entry matches, the job **fails loudly** rather
+than committing nothing — a green pipeline that changed nothing is the worst outcome here. So the
+image name must be written identically and in full in `base/deployment.yaml` and in both overlays.
+
+The push retries up to 5 times with `git pull --rebase` in between: every service in a project
+pushes to the same deploy repo, so racing on the default branch is expected, not an error.
+
+### Multiple services in one repo
+
+Each service gets its own `IMAGE`, `BUILD_CONTEXT` and its own pair of jobs, via `extends`:
+
+```yaml
+build:api:
+  extends: build:image
+  variables:
+    BUILD_CONTEXT: services/api
+    IMAGE: $CI_REGISTRY_IMAGE/api
+
+deploy:api:test:
+  extends: deploy:test
+  variables:
+    IMAGE: $CI_REGISTRY_IMAGE/api
+  needs: [build:api]
+```
+
+Since the project's namespace is shared by all services and both environments, different services
+must have different resource names — `myapp` and `worker`, not two `app`s in different directories.
+
+### If `gcr.io` is unreachable
+
+`gcr.io` may be blocked from the office network, so `build:image` can't pull kaniko. Cheapest fix
+first: mirror the kaniko image into the project's own registry and override `KANIKO_IMAGE`;
+otherwise point the runner at the `mihomo` proxy. Do **not** propose docker-in-docker instead of
+kaniko — it needs a privileged runner, i.e. effectively root on the node.
 
 ## Checking and driving deploys with `argocd_exec`
 
