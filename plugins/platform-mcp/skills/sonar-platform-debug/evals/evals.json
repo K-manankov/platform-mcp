@@ -9,8 +9,8 @@
     },
     {
       "id": 2,
-      "prompt": "My pod for payments-billing-api is stuck in Pending and the Argo CD app shows OutOfSync too — any idea what's going on?",
-      "expected_output": "Gives argocd_exec commands to inspect (app get, app resources/logs) and names at least one platform-specific Pending cause (node selector using a short hostname instead of the FQDN kubernetes.io/hostname value, or a local-path PV pinned to a different/dead node). Should distinguish this from generic Kubernetes advice by citing the sonar-prod-specific gotchas rather than only generic 'check events/describe pod' guidance.",
+      "prompt": "My pod for billing-api in the payments project is stuck in Pending and the Argo CD app shows OutOfSync too — any idea what's going on?",
+      "expected_output": "Gives argocd_exec commands to inspect (app get, app resources/logs) using the environment-suffixed app name (payments-<repo>-test / -prod — a bare payments-<repo> matches no Application) and names at least one platform-specific Pending cause: node selector using a short hostname instead of the FQDN kubernetes.io/hostname value, a local-path PV pinned to a different/dead node, or a remote-node taint without a matching toleration. Bonus for naming an environment-specific OutOfSync cause (missing nameSuffix making test and prod overwrite each other, or a missing overlays/<env> directory causing ComparisonError). Should distinguish this from generic Kubernetes advice by citing the sonar-prod-specific gotchas rather than only generic 'check events/describe pod' guidance.",
       "files": []
     }
   ]

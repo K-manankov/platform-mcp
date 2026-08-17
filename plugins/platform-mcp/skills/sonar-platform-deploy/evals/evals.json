@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "Смержил MR в deploy-репозиторий проекта payments, хочу задеплоить прямо сейчас, не ждать автосинк. Как заставить Argo CD засинкать немедленно?",
-      "expected_output": "Explains merging the MR is the deploy trigger itself, then gives the exact argocd_exec command to force an immediate sync (app sync <project>-<repo>), notes this is a mutating command needing user confirmation, and mentions checking status first/after with app get. Should not suggest kubectl apply or a separate CI/CD deploy pipeline that doesn't exist on this platform.",
+      "expected_output": "Explains merging the MR is the deploy trigger itself and that auto-sync is always on for project apps, then gives the exact argocd_exec command to force an immediate sync using the environment-suffixed app name (app sync <project>-<repo>-<env>, e.g. payments-<repo>-test) — not a bare <project>-<repo>, which matches no Application. Notes this is a mutating command needing user confirmation, and mentions checking status with app get. Should not suggest kubectl apply or a separate CI/CD deploy pipeline for syncing.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "How do I roll back the payments-billing-api app to the previous version? Last deploy broke prod and I need this reverted fast.",
-      "expected_output": "Gives argocd_exec app history <app> to find a target revision and argocd_exec app rollback <app> <id> to roll back, notes it's a mutating/confirmable operation, and correctly uses the fixed <project>-<repo> naming convention (payments-billing-api). Bonus if it also mentions this is a stopgap and reverting the merge in Git is the durable fix since GitOps will otherwise drift back on the next sync.",
+      "prompt": "How do I roll back the billing-api app in the payments project to the previous version? Last deploy broke prod and I need this reverted fast.",
+      "expected_output": "Correctly steers AWAY from argocd app rollback as the primary answer: project apps run automated sync with selfHeal, so a rollback is refused or immediately undone when Argo re-applies Git. The durable fix is in Git — revert the commit or set newTag in deploy/overlays/prod back to the previous commit-SHA tag and merge, which Argo picks up automatically. Bonus for noting the previous good tag is visible in the deploy repo's git history for that overlay file, and for using the environment-suffixed app name (payments-<repo>-prod) when showing any argocd_exec command.",
       "files": []
     }
   ]
