@@ -173,7 +173,7 @@ manifests the project adds to its own `deploy/`, not something the platform sets
   spec:
     ingressClassName: nginx
     rules:
-      - host: <app>.infra.sonar-corp.ru   # needs an A-record in FreeIPA pointing at .106
+      - host: <app>-<env>.k8s.sonar-corp.ru   # no DNS work needed, see below
         http:
           paths:
             - path: /
@@ -182,10 +182,23 @@ manifests the project adds to its own `deploy/`, not something the platform sets
                 service: { name: <app>, port: { name: http } }
   ```
 
+  **Project apps are published as `<app>-<env>.k8s.sonar-corp.ru`** (`myapp-test`, `myapp-prod`).
+  A wildcard record `*.k8s.sonar-corp.ru → 192.168.88.106` already exists in FreeIPA, so a new
+  app needs no DNS change at all — the `Ingress` in the overlay is the whole job. Do not tell the
+  user to add an A-record, and do not put project apps under `*.infra.sonar-corp.ru`: that zone
+  is the platform's (argocd, vault, auth, mihomo, nodes).
+
+  Keep the environment as a **suffix inside the first label** (`myapp-test`), not as its own
+  level (`myapp.test.k8s...`). The wildcard record would resolve both, but a wildcard TLS cert
+  for `*.k8s.sonar-corp.ru` covers only one level, so the deeper name would break if such a cert
+  is ever introduced. The suffix matches the overlay's `nameSuffix: -<env>`, so the resource name
+  and the hostname line up.
+
   No `tls:` block is needed — leaving it unset makes ingress-nginx serve its own self-signed
-  cert on 443 (one browser warning, same as argocd/vault/keycloak). Like every
-  `*.infra.sonar-corp.ru` host, this is VPN-only; outside the VPN the public wildcard DNS answers
-  instead and the request goes nowhere (see the debug skill's Step 0).
+  cert on 443 (one browser warning, same as argocd/vault/keycloak). Like every platform host,
+  this is VPN-only; outside the VPN the public wildcard DNS on `*.sonar-corp.ru` answers instead
+  and the request goes nowhere (see the debug skill's Step 0). Verify with
+  `dig +short <app>-<env>.k8s.sonar-corp.ru` — it should return `192.168.88.106`.
 
 - **Any other TCP/UDP protocol** — ingress-nginx doesn't proxy plain TCP, so use a `LoadBalancer`
   `Service` instead and let MetalLB hand it an address from the pool. Free pool addresses:

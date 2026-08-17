@@ -16,7 +16,11 @@ a disproportionate share of "nothing works" reports and don't look like what the
   connection-refused, just confusing timeouts or TLS errors. Check with
   `dig +short argocd.infra.sonar-corp.ru`; if it's not `192.168.88.106`, that's the whole problem,
   fix VPN first before debugging anything else. The self-signed cert on these hosts is expected
-  (one browser warning), not itself a bug.
+  (one browser warning), not itself a bug. The same applies to project apps, which are published
+  as `<app>-<env>.k8s.sonar-corp.ru` off a FreeIPA wildcard on the same `.106`: "my app's URL
+  doesn't work" is usually VPN, not the `Ingress`. Check that host with `dig` too before
+  suspecting the app — and note the wildcard means a typo'd hostname resolves fine and lands on
+  ingress-nginx as a 404 rather than failing to resolve.
 - **Auth.** Run `argocd_auth_status` / `vault_auth_status` before anything else. An
   expired/missing session produces tool errors that look unrelated to auth if you don't check
   this first. Re-auth with `argocd_login` / `vault_login`.
