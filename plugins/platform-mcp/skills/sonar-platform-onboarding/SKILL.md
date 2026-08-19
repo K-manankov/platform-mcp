@@ -170,8 +170,13 @@ manifests the project adds to its own `deploy/`, not something the platform sets
   kind: Ingress
   metadata:
     name: <app>
+    annotations:
+      cert-manager.io/cluster-issuer: vault-pki-int   # see below
   spec:
     ingressClassName: nginx
+    tls:
+      - hosts: [<app>-<env>.k8s.sonar-corp.ru]
+        secretName: <app>-<env>-tls                   # any name; cert-manager creates it
     rules:
       - host: <app>-<env>.k8s.sonar-corp.ru   # no DNS work needed, see below
         http:
@@ -194,8 +199,11 @@ manifests the project adds to its own `deploy/`, not something the platform sets
   is ever introduced. The suffix matches the overlay's `nameSuffix: -<env>`, so the resource name
   and the hostname line up.
 
-  No `tls:` block is needed — leaving it unset makes ingress-nginx serve its own self-signed
-  cert on 443 (one browser warning, same as argocd/vault/keycloak). Like every platform host,
+  The `vault-pki-int` `ClusterIssuer` signs off the internal CA (Vault PKI under the FreeIPA
+  root), so domain-joined machines trust the cert with no extra setup. It covers
+  `k8s.sonar-corp.ru` and `infra.sonar-corp.ru` only — for a public domain you need a different
+  issuer. Omitting both lines still works: ingress-nginx then serves its own self-signed cert on
+  443, at the cost of a browser warning. Like every platform host,
   this is VPN-only; outside the VPN the public wildcard DNS on `*.sonar-corp.ru` answers instead
   and the request goes nowhere (see the debug skill's Step 0). Verify with
   `dig +short <app>-<env>.k8s.sonar-corp.ru` — it should return `192.168.88.106`.

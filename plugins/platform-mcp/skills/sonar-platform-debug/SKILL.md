@@ -15,8 +15,9 @@ a disproportionate share of "nothing works" reports and don't look like what the
   `*.infra.sonar-corp.ru` answers instead, and the request just goes nowhere — no clean
   connection-refused, just confusing timeouts or TLS errors. Check with
   `dig +short argocd.infra.sonar-corp.ru`; if it's not `192.168.88.106`, that's the whole problem,
-  fix VPN first before debugging anything else. The self-signed cert on these hosts is expected
-  (one browser warning), not itself a bug. The same applies to project apps, which are published
+  fix VPN first before debugging anything else. These hosts serve a cert from the internal CA
+  (`vault-pki-int`), so a self-signed one showing up instead means issuance broke, not that it's
+  normal — check `kubectl get certificate -A`. The same applies to project apps, which are published
   as `<app>-<env>.k8s.sonar-corp.ru` off a FreeIPA wildcard on the same `.106`: "my app's URL
   doesn't work" is usually VPN, not the `Ingress`. Check that host with `dig` too before
   suspecting the app — and note the wildcard means a typo'd hostname resolves fine and lands on
