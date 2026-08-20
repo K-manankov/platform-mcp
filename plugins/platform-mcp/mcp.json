@@ -2,7 +2,7 @@
   "mcpServers": {
     "platform": {
       "command": "npx",
-      "args": ["-y", "@sonar/platform-mcp"],
+      "args": ["-y", "@sonar/platform-mcp@latest"],
       "env": {
         "ARGOCD_BASE_URL": "${ARGOCD_BASE_URL}",
         "VAULT_ADDR": "${VAULT_ADDR}",

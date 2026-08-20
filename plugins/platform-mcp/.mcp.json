@@ -1,7 +1,7 @@
 {
   "platform": {
     "command": "npx",
-    "args": ["-y", "@sonar/platform-mcp"],
+    "args": ["-y", "@sonar/platform-mcp@latest"],
     "env": {
       "ARGOCD_BASE_URL": "https://argocd.infra.sonar-corp.ru",
       "VAULT_ADDR": "https://vault.infra.sonar-corp.ru",
