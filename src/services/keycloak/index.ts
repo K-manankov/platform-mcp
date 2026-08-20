@@ -3,6 +3,27 @@ import { ensureBinary } from '../../bootstrap/ensure-binary.js';
 import { execCli } from '../exec.js';
 import type { AuthStatus, LoginOptions, ServiceModule } from '../types.js';
 import { KeycloakSession } from './session.js';
+import { resolveTruststore, type Truststore } from './truststore.js';
+
+/**
+ * kcadm — picocli: глобальные опции (--config, --truststore, ...) обязаны
+ * идти после имени подкоманды (get/create/...), иначе "Unknown options" ещё
+ * до попытки их разобрать. Кладём их сразу после команды, а не в конец —
+ * пользовательские args могут заканчиваться значением, которое ждёт данные
+ * (например -s KEY=VALUE), и туда наши флаги лучше не втискивать.
+ */
+export const buildKcadmArgv = (
+  args: string[],
+  opts: { configPath: string; truststore?: Truststore }
+): string[] => {
+  const [command, ...rest] = args;
+  const flags = [
+    '--config',
+    opts.configPath,
+    ...(opts.truststore ? ['--truststore', opts.truststore.path, '--trustpass', opts.truststore.password] : [])
+  ];
+  return command ? [command, ...flags, ...rest] : [...flags, ...rest];
+};
 
 const EXEC_HELP = `Аргументы командной строки kcadm, массивом. Адрес и токен подставляются сервером — \
 флаги --server, --config, --no-config запрещены, вход делается через keycloak_login (FreeIPA в realm master).
@@ -54,8 +75,14 @@ export class KeycloakService implements ServiceModule {
       log: (message) => process.stderr.write(`${message}\n`)
     });
 
-    // --config первым: сессия MCP, не ~/.keycloak/kcadm.config.
-    const argv = ['--config', this.service.kcadmConfigPath, ...args];
+    const truststore = await resolveTruststore({
+      serverUrl: this.service.url,
+      binDir: this.app.binDir,
+      insecure: this.app.insecureSkipTlsVerify
+    });
+
+    // --config — сессия MCP, не ~/.keycloak/kcadm.config.
+    const argv = buildKcadmArgv(args, { configPath: this.service.kcadmConfigPath, truststore });
 
     return execCli({
       service: this.name,

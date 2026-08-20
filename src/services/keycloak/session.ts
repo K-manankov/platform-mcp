@@ -35,9 +35,10 @@ export const writeKcadmConfig = (
     expiresAt: number;
   }
 ): void => {
+  // RealmConfigData (org.keycloak.client.cli.config) знает только эти поля —
+  // serverUrl/realm сюда не входят, kcadm падает с UnrecognizedPropertyException
+  // при их наличии. serverUrl/realm нужны лишь как ключи внешней map ConfigData.
   const realmData = {
-    serverUrl: opts.serverUrl,
-    realm: REALM,
     clientId: CLIENT_ID,
     token: opts.accessToken,
     refreshToken: opts.refreshToken,
@@ -45,6 +46,9 @@ export const writeKcadmConfig = (
     grantTypeForAuthentication: 'authorization_code'
   };
 
+  // Верхнеуровневые serverUrl/realm — это ConfigData, не RealmConfigData:
+  // ими kcadm определяет "текущий" endpoint без --server/config credentials.
+  // Без них — "No server specified. Use --server, or 'kcadm.sh config credentials'."
   const config = {
     serverUrl: opts.serverUrl,
     realm: REALM,
