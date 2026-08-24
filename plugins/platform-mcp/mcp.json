@@ -2,8 +2,9 @@
   "mcpServers": {
     "platform": {
       "command": "npx",
-      "args": ["-y", "@sonar/platform-mcp@0.4.7"],
+      "args": ["-y", "@sonar/platform-mcp@latest"],
       "env": {
+        "npm_config_prefer_online": "true",
         "ARGOCD_BASE_URL": "${ARGOCD_BASE_URL}",
         "VAULT_ADDR": "${VAULT_ADDR}",
         "KEYCLOAK_BASE_URL": "${KEYCLOAK_BASE_URL}",
