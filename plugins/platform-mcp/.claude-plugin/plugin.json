@@ -1,7 +1,7 @@
 {
   "name": "platform-mcp",
   "description": "Argo CD, Vault и Keycloak кластера sonar-prod с SSO-входом. Команды выполняются от имени вошедшего пользователя, значения секретов в контекст модели не попадают.",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "author": {
     "name": "infra/k8s"
   },
