@@ -1,6 +1,6 @@
 ---
 name: sonar-platform-keycloak
-description: How to inspect or change Keycloak on sonar-prod via platform-mcp (keycloak_exec / keycloak_login), how to write and wire up KeycloakClient/KeycloakRole/KeycloakGroup/KeycloakOrganization manifests for keycloak-operator in a project's deploy/, and what shared Keycloak entities (realms sonar-dev/sonar-prod, the sonar organization, FreeIPA federation) already exist platform-wide. Use when the user asks about realms, clients, users, roles, FreeIPA login to Keycloak, Admin API / kcadm against auth.infra.sonar-corp.ru, onboarding a project's auth into Keycloak, or writing keycloak-operator CRs.
+description: How to inspect or change Keycloak on sonar-prod via platform-mcp (keycloak_exec / keycloak_login), how to write and wire up KeycloakClient/KeycloakRole/KeycloakGroup/KeycloakOrganization manifests for keycloak-operator in a project's deploy/, how a client picks its login page (B2C one form vs B2B two-step identity-first with organization selection, decided by the organization client scope), and what shared Keycloak entities (realms sonar-dev/sonar-prod, the sonar organization, the sonar-browser flow, FreeIPA federation) already exist platform-wide. Use when the user asks about realms, clients, users, roles, organizations, the login/registration screens, single-step vs two-step sign-in, FreeIPA login to Keycloak, Admin API / kcadm against auth.infra.sonar-corp.ru, onboarding a project's auth into Keycloak, or writing keycloak-operator CRs.
 ---
 
 # Keycloak через platform-mcp
@@ -111,6 +111,61 @@ personal-lk (`/account/applications`): `definition.name`/`description`/
 полей — `infra`, `platform/keycloak-config/README.md`, раздел «Каталог
 приложений в личном кабинете».
 
+## B2C или B2B: как клиент выбирает страницу входа
+
+Это первое, что нужно решить, описывая `KeycloakClient`, и решается оно одной
+строкой — присутствием scope `organization` в `definition.defaultClientScopes`.
+
+Браузерный флоу `sonar-browser`
+([11-browser-flow.yaml](https://git.sonar-corp.ru/infra/k8s/platform/-/blob/main/platform/keycloak-config/11-browser-flow.yaml))
+— это копия встроенного `browser`, у которой подпоток организаций закрыт
+условием «Condition - client scope» со значением `organization`. Отсюда две
+разные страницы входа:
+
+| `defaultClientScopes` | Что видит пользователь |
+|---|---|
+| без `organization` (B2C) | Одна форма: почта, пароль, кнопки IdP, ссылка на регистрацию |
+| с `organization` (B2B) | Почта → при членстве больше чем в одной организации выбор организации → пароль. Плюс автоматический редирект на IdP организации по домену почты |
+
+```yaml
+    # B2B-клиент: список задаётся целиком, ClientRepresentation его
+    # заменяет, а не дополняет. Шесть первых значений — стандартный набор
+    # Keycloak для openid-connect, седьмым дописывается organization.
+    defaultClientScopes:
+      - acr
+      - basic
+      - email
+      - profile
+      - roles
+      - web-origins
+      - organization
+```
+
+B2C-клиенту не нужно писать ничего: без этого поля Keycloak раздаёт свой
+набор по умолчанию, а `organization` в нём лежит как optional и в запрос сам
+не попадает.
+
+Три вещи, на которых тут легко ошибиться:
+
+- **Двухшаговость нельзя убрать настройкой клиента у встроенного флоу.** У
+  Keycloak подпоток организаций условный по «Condition - user configured», а
+  это условие всегда истинно, пока организации включены в realm'е. Ровно
+  поэтому у нас свой флоу, а не стоковый `browser`.
+- **Имя scope менять нельзя.** Тот же самый `organization` включает и экран
+  выбора организации: в `OrganizationScope` значение `ANY` — это пустая
+  строка после двоеточия, то есть ровно `organization`. `organization:*` это
+  `ALL`, а `organization:<alias>` — `SINGLE`, и экран выбора они не включают.
+- **Ссылка на регистрацию у B2B может пропасть не по вашей вине.** Если к
+  организации привязан identity provider без `hideOnLogin`, Keycloak на шаге
+  почты подменяет бин `realm` на `OrganizationAwareRealmBean`, а тот
+  возвращает `registrationAllowed = false` — чтобы человек регистрировался
+  через брокер. Атрибут `sonar.registerLink` это не перебивает.
+
+Сами кнопки IdP и ссылка на регистрацию включаются атрибутами клиента
+`sonar.identityProviders` (список alias через запятую) и
+`sonar.registerLink: "true"` — без них форма входа показывает только почту и
+пароль, независимо от флагов realm'а.
+
 Что важно при написании:
 - `spec.clusterRealmRef.name` — единственное место выбора контура
   (`sonar-dev`/`sonar-prod`); свой realm проект завести не может.
@@ -135,16 +190,21 @@ personal-lk (`/account/applications`): `definition.name`/`description`/
   выбора контура для проекта через `clusterRealmRef.name`. Дев мягче
   (`sslRequired: external`, порог блокировки выше), прод жёстче
   (`sslRequired: all`) — иначе оба симметричны.
-- **`KeycloakOrganization sonar`** (домен `sonar-corp.ru`) и
-  **`KeycloakOrganization standalone`** (без домена) в обоих realm'ах —
-  `sonar` представляет саму компанию: и как потребителя собственных B2B-
-  продуктов (наравне с любой компанией-клиентом), и как единственный тенант
-  для приложений, которые делаются только для внутреннего использования и не
-  распространяются вовне. `standalone` — контейнер для одиночных B2C-
-  пользователей без своей компании. Организация под конкретного
-  клиента-компанию проекта (B2B) заводится отдельным CR (см. `demo-acme` в
-  примере выше) — это не конфликтует с общими. Подробнее — `infra`,
-  `platform/keycloak-config/README.md`, раздел «Модель организаций».
+- **`KeycloakOrganization sonar`** (домен `sonar-corp.ru`) в обоих realm'ах —
+  представляет саму компанию: и как потребителя собственных B2B-продуктов
+  (наравне с любой компанией-клиентом), и как единственный тенант для
+  приложений, которые делаются только для внутреннего использования и не
+  распространяются вовне. Организация под конкретного клиента-компанию
+  проекта (B2B) заводится отдельным CR (см. `demo-acme` в примере выше) — это
+  не конфликтует с общей. **Организация = компания-тенант, и ничего кроме:**
+  B2C-пользователь ни в какой организации не состоит, он просто живёт в
+  realm'е; контейнера «для тех, у кого нет компании» нет и заводить его не
+  надо. Подробнее — `infra`, `platform/keycloak-config/README.md`, раздел
+  «Модель организаций».
+- **`KeycloakAuthenticationFlow sonar-browser`** в обоих realm'ах — браузерный
+  флоу входа, на него смотрит `browserFlow` каждого realm'а. Свой флоу
+  проекту не нужен и заводить его не следует: этот один обслуживает и B2C, и
+  B2B, см. следующий раздел.
 - **Admin-роль в приложении** — смэппить на группу `dep_it` (разработчики) или
   завести свою группу проекта и добавить в неё нужных людей поимённо; членство
   в обоих случаях — разовое действие руками (Admin Console/API), не CR: у
