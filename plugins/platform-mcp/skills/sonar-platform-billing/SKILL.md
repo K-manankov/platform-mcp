@@ -96,7 +96,7 @@ Authorization: Bearer <client_id>:<client_secret>
 |---|---|---|
 | `ingest` | `POST /api/v1/events` | **любой** клиент, прошедший `client_credentials` |
 | `read` | `GET` планов, клиентов, entitlement'ов и грантов | он же |
-| `catalog` | `GET\|POST\|PUT` на `/meters`, `/features`, `/plans` и подпути (`publish`, `next`) | Job каталога (`openmeter-catalog`) |
+| `catalog` | `GET\|POST\|PUT` на `/meters`, `/features`, `/plans` и **любые** их подпути (`publish`, `next`, `archive`) | Job каталога (`openmeter-catalog`) |
 | `other` | всё остальное: выдача грантов, профили биллинга, `DELETE` | **в проде никому** |
 
 Коды ответа: **401** — ключа нет или он неверный; **403** — ключ верный, но класс
@@ -186,7 +186,9 @@ Authorization: Bearer <client_id>:<client_secret>
 - **метр или фича изменились** — не меняет: в OpenMeter они неизменяемы после
   создания. Пишет расхождение и завершается с кодом 1 (провалившийся синк);
 - **файл убрали из Git** — ничего не делает. Удаления и отключения в Job нет
-  намеренно; убрать метр, фичу или план — вручную через port-forward.
+  намеренно; убрать метр, фичу или план — вручную через port-forward (`DELETE`
+  шлюз не пропускает даже клиенту каталога; `archive` плана — пропускает, но
+  Job им не пользуется).
 
 Новый файл каталога **обязательно вписать в `base/kustomization.yaml`**: kustomize
 не понимает маски, забытый файл Job просто не увидит. Пайплайн репозитория

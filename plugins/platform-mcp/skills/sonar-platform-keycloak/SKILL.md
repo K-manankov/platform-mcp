@@ -51,12 +51,24 @@ UI, ни через `keycloak_exec` на постоянной основе — �
 namespace проекта — ни отдельного CI-шага, ни PR в инфра-репозиторий не
 нужно.
 
-**Класть их надо в `base/`, а не в оверлей окружения** — в отличие от
-`ExternalSecret`, который живёт как раз в оверлее. Клиент общий на проект:
-test ходит в тот же клиент, что и prod, пока realm'ы общие. Положить
-`KeycloakClient` в `overlays/test` и `overlays/prod` — значит получить два
-клиента с разными `clientId` (оверлей добавит `nameSuffix`) там, где нужен
-один. Разводить контуры по realm'ам (`clusterRealmRef`), а не по оверлеям.
+**Класть их надо в оверлей окружения** (`overlays/test/`, `overlays/prod/`),
+как и `ExternalSecret`. Причина — realm'ы разведены по контурам: тест живёт в
+`sonar-dev`, прод в `sonar-prod`, а у `KeycloakClient` один `clusterRealmRef`.
+Одним CR два контура не покрыть, значит клиентов два — по одному на realm. Так
+сделано во всех проектах кластера.
+
+Две ловушки, обе от того, что `nameSuffix` оверлея переименовывает сами
+объекты, но не ссылки внутрь CR:
+
+- `clientSecretRef.name` пишется литерально, с суффиксом окружения
+  (`litellm-sso-oidc-prod`): Secret'ы обоих контуров лежат в одном namespace и
+  без суффикса затрут друг друга;
+- то же с `serviceAccountRef.name` в `KeycloakRoleMapping` — там указывается
+  `metadata.name` клиента уже после `nameSuffix`.
+
+`clientId` при этом у контуров может совпадать: они в разных realm'ах и друг
+другу не мешают (так у `sonar-compute-openmeter`). Разводить контуры можно и
+разными `clientId`, но это не обязательно.
 
 Эталонный шаблон — `infra/examples/keycloak-project.yaml`:
 
