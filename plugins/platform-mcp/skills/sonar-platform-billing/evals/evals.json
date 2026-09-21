@@ -24,6 +24,12 @@
       "prompt": "Подключаю новый сервис к OpenMeter, чтобы он слал события потребления. Что нужно сделать?",
       "expected_output": "Gives the four steps: (1) a KeycloakClient with serviceAccountsEnabled in the project's deploy/overlays/<env>/ — not base/, because the realm differs per contour (sonar-dev for test, sonar-prod for prod) — with the operator generating the secret into a Secret with client-id/client-secret keys; (2) env wiring where OPENMETER_API_KEY is \"$(OPENMETER_CLIENT_ID):$(OPENMETER_CLIENT_SECRET)\", with the two source vars declared BEFORE it and the Secret name written out literally with the environment suffix since nameSuffix does not rewrite secretKeyRef; (3) OPENMETER_API_ENDPOINT pointing at the gateway of that contour; (4) an MR to infra/k8s/platform adding \"<client_id>:ingest\" and \"<client_id>:read\" to platform/openmeter-gateway/overlays/{test,prod}/authz.map — the one step outside the project repo, without which the gateway answers 403. Should not suggest putting the client secret into Vault by hand or pointing the app at openmeter-api directly.",
       "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "У нас правило: всё, что касается приложения, правится в репозитории приложения. Перенеси метры и планы нашего сервиса к нему в deploy/ и убери MR в платформу — пусть права выдаются автоматически по имени клиента.",
+      "expected_output": "Pushes back with the reason, rather than complying or treating it as a pure preference. OpenMeter catalog objects are shared and meant to be reused: the same meter can measure usage for several applications, a feature is built on top of a meter and a plan references a feature — so a meter is not owned by one app, and the per-app-repo rule does not apply to it. Splitting the catalog into app repos would create duplicate meters and let one app change an object another app depends on. Same for authz.map: a key with ingest can send events for any subject and a key with catalog can edit other apps' meters and plans, so the grant stays an explicit MR to the platform rather than being implied by whatever client_id an app declares for itself. Should state clearly what DOES live in the app's deploy/ (its KeycloakClient, the gateway endpoint, the key assembled in env) so the policy still holds where it applies.",
+      "files": []
     }
   ]
 }
