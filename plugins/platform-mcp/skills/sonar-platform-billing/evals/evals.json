@@ -1,0 +1,29 @@
+{
+  "skill_name": "sonar-platform-billing",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Мой под в namespace sonar-compute не может достучаться до http://openmeter-api.openmeter.svc.cluster.local — запрос уходит в таймаут. Сеть сломалась?",
+      "expected_output": "Explains this is deliberate, not a network failure: NetworkPolicy (platform/openmeter-netpol) only lets the gateway of the matching contour, billing-adapter and openmeter-customer-sync reach openmeter-api, because open-source OpenMeter has no authentication of its own. Tells the app to use the gateway instead — openmeter-gateway.openmeter.svc.cluster.local (prod) or openmeter-gateway-test.openmeter.svc.cluster.local (test) — with Authorization: Bearer <client_id>:<client_secret> from its Keycloak client. Should not propose opening the NetworkPolicy, adding the pod to the allow list, or treating this as a CNI/DNS problem.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Нужно добавить новый пакет: 5000 рублей за $50 на баланс, бессрочно. Как это сделать?",
+      "expected_output": "Routes this through the catalog-as-code repo infra/k8s/openmeter-resources: add a plan JSON under base/catalog/plans/, and — critically — list the new file explicitly in base/kustomization.yaml because kustomize has no globs and the Job would silently not see it (ci/check.py catches this). Explains the rollout: merging to main applies it to the test OpenMeter, merging main -> prod applies it to prod, via a PostSync Job (no schedule). Gets the plan shape right: exactly one phase and one flat_fee rate card, price in rateCards[0].price.amount, featureKey must be the feature the app reads (litellm_credits for sonar-compute), and an open-ended package needs metadata.package_mode topup with metadata.credits rather than an entitlementTemplate. Should not suggest creating the plan by hand with curl against prod, nor editing it directly in OpenMeter.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Хочу поправить метр litellm_spend — там неправильный valueProperty, стоит $.data.cost. Поправь в каталоге и выкати.",
+      "expected_output": "Two things must come out. First, the correct JSONPath: valueProperty is evaluated relative to the event's data field, so it is $.cost, not $.data.cost — with the wrong path events are still accepted with 204 but silently fail validation later, visible only via GET /api/v1/events or sink-worker logs. Second, that meters are immutable in OpenMeter after creation: the sync Job will NOT rewrite an existing meter — it reports the mismatch and exits 1, failing the sync. So fixing it means deleting and recreating the meter (admin, via kubectl port-forward svc/openmeter-api, since DELETE is not in the catalog class) or creating a new meter under a different slug — not just editing the JSON and waiting for the Job. Bonus for noting raw events are not lost: a recreated meter with the same slug re-aggregates history by eventType.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Подключаю новый сервис к OpenMeter, чтобы он слал события потребления. Что нужно сделать?",
+      "expected_output": "Gives the four steps: (1) a KeycloakClient with serviceAccountsEnabled in the project's deploy/overlays/<env>/ — not base/, because the realm differs per contour (sonar-dev for test, sonar-prod for prod) — with the operator generating the secret into a Secret with client-id/client-secret keys; (2) env wiring where OPENMETER_API_KEY is \"$(OPENMETER_CLIENT_ID):$(OPENMETER_CLIENT_SECRET)\", with the two source vars declared BEFORE it and the Secret name written out literally with the environment suffix since nameSuffix does not rewrite secretKeyRef; (3) OPENMETER_API_ENDPOINT pointing at the gateway of that contour; (4) an MR to infra/k8s/platform adding \"<client_id>:ingest\" and \"<client_id>:read\" to platform/openmeter-gateway/overlays/{test,prod}/authz.map — the one step outside the project repo, without which the gateway answers 403. Should not suggest putting the client secret into Vault by hand or pointing the app at openmeter-api directly.",
+      "files": []
+    }
+  ]
+}
