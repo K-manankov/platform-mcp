@@ -1,9 +1,30 @@
 ---
 name: sonar-platform-keycloak
-description: How to inspect or change Keycloak on sonar-prod via platform-mcp (keycloak_exec / keycloak_login), how to write and wire up KeycloakClient/KeycloakRole/KeycloakGroup/KeycloakOrganization manifests for keycloak-operator in a project's deploy/, how a client picks its login page (B2C one form vs B2B two-step identity-first with organization selection, decided by the organization client scope), and what shared Keycloak entities (realms sonar-dev/sonar-prod, the sonar organization, the sonar-browser flow, FreeIPA federation) already exist platform-wide. Use when the user asks about realms, clients, users, roles, organizations, the login/registration screens, single-step vs two-step sign-in, FreeIPA login to Keycloak, Admin API / kcadm against auth.infra.sonar-corp.ru, onboarding a project's auth into Keycloak, or writing keycloak-operator CRs.
+description: Work with the shared Keycloak on sonar-prod via platform-mcp and keycloak-operator. Use for realms, clients, users, roles, organizations, FreeIPA sign-in, B2C/B2B login flows, project Keycloak CRs, or Admin API access. Distinguish the public auth.sonar-corp.ru issuer from the VPN-only auth.infra.sonar-corp.ru Admin API.
 ---
 
 # Keycloak через platform-mcp
+
+## Публичный issuer и внутренний Admin API
+
+Инстанс один на `sonar-dev` и `sonar-prod`. `KC_HOSTNAME` задаёт публичный
+`https://auth.sonar-corp.ru`; issuer realm'ов — соответственно
+`https://auth.sonar-corp.ru/realms/sonar-dev` и
+`https://auth.sonar-corp.ru/realms/sonar-prod`. Именно эти значения должны
+проверять OIDC-клиенты, независимо от маршрута их серверных запросов.
+
+`https://auth.infra.sonar-corp.ru` — внутренний адрес консоли и Admin REST API.
+Для `platform-mcp` оставляйте `KEYCLOAK_BASE_URL` внутренним: `keycloak_exec`
+использует его для `kcadm`, поэтому нужны VPN и доверие к корпоративному CA.
+`keycloak_login` читает discovery через внутренний адрес, но Keycloak объявляет
+в нём публичный issuer и публичные URL авторизации и обмена токена; браузер
+идёт на `auth.sonar-corp.ru`. Подмена `KEYCLOAK_BASE_URL` на публичный адрес
+сломает `keycloak_exec`, поскольку публичный NPM ограничивает `/admin/*`.
+
+У приложения могут быть разные адреса для OIDC и Admin API. Внешний сервер
+без доступа к VPN использует публичный OIDC URL; доступ к Admin API ему
+настраивают отдельно с узким правилом по исходящему IP и служебной учёткой.
+Смена DNS/адреса Admin API не меняет `iss` в токенах.
 
 Нужны VPN, Java 17+ (для `kcadm`) и сессия: `keycloak_login` → браузер → FreeIPA
 (realm `master`, клиент `platform-mcp-cli`). Проверка: `keycloak_auth_status`.

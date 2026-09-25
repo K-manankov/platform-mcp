@@ -68,8 +68,8 @@ export interface AppConfig {
   binDir: string;
   policy: PolicyConfig;
   /**
-   * Не проверять TLS-сертификаты сервисов. Осознанный опт-ин: у ingress'а
-   * этого кластера сертификата нет, отдаётся дефолтный самоподписанный.
+   * Не проверять TLS-сертификаты сервисов. Внутренний ingress использует
+   * корпоративный CA; при настроенном NODE_EXTRA_CA_CERTS опция не нужна.
    */
   insecureSkipTlsVerify: boolean;
 }
@@ -215,8 +215,8 @@ export const applyTlsPolicy = (config: AppConfig): void => {
   if (!config.insecureSkipTlsVerify) return;
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   process.stderr.write(
-    'ВНИМАНИЕ: проверка TLS-сертификатов отключена (PLATFORM_MCP_INSECURE). Соединение ' +
+      'ВНИМАНИЕ: проверка TLS-сертификатов отключена (PLATFORM_MCP_INSECURE). Соединение ' +
       'шифруется, но подлинность сервера не подтверждается — токены доступа уязвимы к ' +
-      'перехвату внутри сети. Это временная мера до выпуска настоящих сертификатов.\n'
+      'перехвату внутри сети. Укажите корневой CA в NODE_EXTRA_CA_CERTS и отключите эту опцию.\n'
   );
 };
