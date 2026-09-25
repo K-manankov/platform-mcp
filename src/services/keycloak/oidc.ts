@@ -5,8 +5,9 @@ import { awaitCallback, randomToken } from '../../auth/loopback.js';
 /**
  * Authorization Code + PKCE для realm master.
  *
- * В отличие от Argo CD, сюда не ходим за настройками сервиса: issuer и клиент
- * известны заранее (public-клиент platform-mcp-cli заводится в bootstrap).
+ * В отличие от Argo CD, клиент известен заранее (platform-mcp-cli из
+ * bootstrap), а issuer читаем из discovery: внутренний Admin URL отличается
+ * от публичного issuer после разделения адресов Keycloak.
  * В сессию кладётся access_token — им пользуется Admin API / kcadm.
  */
 
@@ -26,6 +27,7 @@ export interface OidcEndpoints {
 }
 
 interface ProviderMetadata {
+  issuer?: string;
   authorization_endpoint?: string;
   token_endpoint?: string;
   scopes_supported?: string[];
@@ -71,15 +73,15 @@ const fetchJson = async <T>(url: string, what: string): Promise<T> => {
 };
 
 export const discover = async (keycloakUrl: string): Promise<OidcEndpoints> => {
-  const issuer = `${keycloakUrl.replace(/\/+$/, '')}/realms/${REALM}`;
+  const discoveryUrl = `${keycloakUrl.replace(/\/+$/, '')}/realms/${REALM}`;
   const meta = await fetchJson<ProviderMetadata>(
-    `${issuer}/.well-known/openid-configuration`,
+    `${discoveryUrl}/.well-known/openid-configuration`,
     'метаданные OIDC Keycloak'
   );
 
-  if (!meta.authorization_endpoint || !meta.token_endpoint) {
+  if (!meta.issuer || !meta.authorization_endpoint || !meta.token_endpoint) {
     throw new Error(
-      `Метаданные OIDC-провайдера ${issuer} не содержат authorization_endpoint/token_endpoint.`
+      `Метаданные OIDC-провайдера ${discoveryUrl} не содержат issuer/authorization_endpoint/token_endpoint.`
     );
   }
 
@@ -90,7 +92,7 @@ export const discover = async (keycloakUrl: string): Promise<OidcEndpoints> => {
   }
 
   return {
-    issuer,
+    issuer: meta.issuer,
     authorizationEndpoint: meta.authorization_endpoint,
     tokenEndpoint: meta.token_endpoint,
     clientId: CLIENT_ID,

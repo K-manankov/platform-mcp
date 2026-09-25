@@ -108,7 +108,9 @@ Claude Desktop подключает каталоги плагинов тольк
 ## Вход
 
 Нужен VPN: имена `argocd.infra.sonar-corp.ru`, `vault.infra.sonar-corp.ru` и
-`auth.infra.sonar-corp.ru` резолвятся только изнутри сети. Снаружи их подхватывает
+`auth.infra.sonar-corp.ru` резолвятся только изнутри сети. Публичный
+`auth.sonar-corp.ru` служит OIDC issuer; Admin API доступен по внутреннему
+адресу. Снаружи внутренние имена подхватывает
 публичный wildcard `*.infra.sonar-corp.ru`, и запрос молча уезжает не туда — проверка
 `dig +short argocd.infra.sonar-corp.ru` должна дать `192.168.88.106`.
 
@@ -122,7 +124,7 @@ Claude Desktop подключает каталоги плагинов тольк
 export ARGOCD_BASE_URL=https://argocd.infra.sonar-corp.ru
 export VAULT_ADDR=https://vault.infra.sonar-corp.ru
 export KEYCLOAK_BASE_URL=https://auth.infra.sonar-corp.ru
-export PLATFORM_MCP_INSECURE=true   # пока нет настоящих сертификатов, см. TLS
+export PLATFORM_MCP_INSECURE=true   # временно, если корпоративный CA ещё не доверен; см. TLS
 
 platform-mcp login             # во все настроенные сервисы подряд
 platform-mcp login keycloak    # только в один
@@ -324,32 +326,33 @@ Keycloak Admin API — `kcadm` из дистрибутива. Полнота в�
 
 ## TLS
 
-У `argocd.infra.sonar-corp.ru`, `vault.infra.sonar-corp.ru` и `auth.infra.sonar-corp.ru`
-**сейчас нет настоящих сертификатов**: в Ingress секрет с сертификатом не указан, поэтому
-ingress-nginx отдаёт свой дефолтный самоподписанный (`CN=Kubernetes Ingress Controller Fake Certificate`,
-SAN `ingress.local`).
+У `argocd.infra.sonar-corp.ru`, `vault.infra.sonar-corp.ru` и
+`auth.infra.sonar-corp.ru` Ingress предъявляет сертификаты Vault PKI,
+подписанные корпоративным корнем FreeIPA. Для Keycloak публичный
+`auth.sonar-corp.ru` завершается на NPM с публичным сертификатом, но
+`KEYCLOAK_BASE_URL` у platform-mcp остаётся внутренним ради Admin API.
 
-Пока это так, нужен явный опт-ин:
+Настройте доверие к корпоративному CA на машине с platform-mcp:
+
+```bash
+export NODE_EXTRA_CA_CERTS=/path/to/freeipa-root-ca.pem  # Node/OIDC
+export SSL_CERT_FILE=/path/to/freeipa-root-ca.pem         # argocd и vault (Go)
+export PLATFORM_MCP_INSECURE=false
+```
+
+`kcadm` использует отдельный truststore; platform-mcp строит его из
+`NODE_EXTRA_CA_CERTS`. Манифесты плагина пока сохраняют совместимый дефолт
+`PLATFORM_MCP_INSECURE=true` для машин без установленного CA. Это временный
+обход, который следует отключить после настройки доверия:
 
 ```bash
 export PLATFORM_MCP_INSECURE=true
 ```
 
-Он отключает проверку сертификата для Node (OIDC login) и печатает предупреждение при
-каждом запуске. Соединение остаётся шифрованным, но подлинность сервера не подтверждается,
-а по этому каналу ходят токены доступа. У `kcadm` при отсутствии truststore в конфиге
-включён skip certificate validation (предупреждение в stderr CLI).
-
-`NODE_EXTRA_CA_CERTS` здесь не поможет: SAN сертификата (`ingress.local`) не совпадает с
-именем хоста, поэтому проверка имени провалится даже с доверенным корневым CA.
-
-После выпуска нормальных сертификатов опцию нужно убрать. Если они подписаны внутренним CA,
-достаточно указать корневой — переменные наследуются дочерними CLI:
-
-```bash
-export NODE_EXTRA_CA_CERTS=/path/to/internal-ca.pem   # для самого сервера (Node)
-export SSL_CERT_FILE=/path/to/internal-ca.pem         # для argocd и vault (Go)
-```
+Он отключает проверку сертификата для Node и печатает предупреждение при
+каждом запуске. Соединение остаётся шифрованным, но подлинность сервера не
+подтверждается, а по этому каналу ходят токены доступа. Используйте его лишь
+пока корпоративный CA не добавлен в доверенные.
 
 ## Как это устроено
 
@@ -444,10 +447,11 @@ CI ([.gitlab-ci.yml](.gitlab-ci.yml)) публикует пакет в GitLab np
 Версия продублирована в манифестах плагина, и её нужно поднимать там же:
 
 ```bash
-npm version <major|minor|patch> --no-git-tag-version   # только package.json
+npm version <major|minor|patch> --no-git-tag-version   # package.json и package-lock.json
 # поправить version в обоих plugins/platform-mcp/*/plugin.json
 npm run check:manifests                                # сверить
-git commit -am "0.X.Y" && git tag v0.X.Y && git push --follow-tags
+git add -A && git commit -m "0.X.Y"                    # затем слить MR в main
+git tag v0.X.Y && git push origin v0.X.Y               # тег ставится на main
 ```
 
 Расхождение поймает CI: задание `test` сверяет версии в трёх манифестах и согласованность
@@ -459,4 +463,3 @@ git commit -am "0.X.Y" && git tag v0.X.Y && git push --follow-tags
 защищённых веток, и пользователи подхватывают изменения через `/plugin marketplace update`.
 Обратите внимание, что плагин ставится **из ветки, а не из тега**: как только правка попала
 в `main`, она уже доступна всем — даже если версия ещё не выпущена тегом.
-
