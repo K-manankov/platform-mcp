@@ -5,6 +5,9 @@ description: How to debug and troubleshoot problems on the sonar-prod Kubernetes
 
 # Debugging on sonar-prod
 
+For setting up project logs, metrics, rules or notification channels, use
+[sonar-platform-observability](../sonar-platform-observability/SKILL.md).
+
 Before diving into app-specific diagnosis, rule out the platform-level gotchas below — they cause
 a disproportionate share of "nothing works" reports and don't look like what they are.
 

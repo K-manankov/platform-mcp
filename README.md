@@ -18,6 +18,16 @@ Keycloak — с SSO-входом (GitLab для Argo/Vault, FreeIPA для Keycl
 `vault`, `kcadm`), поэтому доступно всё, что умеют они. Новый сервис добавляется
 одной реализацией интерфейса.
 
+## Мониторинг проектов
+
+В плагин включён навык
+[`sonar-platform-observability`](plugins/platform-mcp/skills/sonar-platform-observability/SKILL.md):
+логи stdout/stderr → Alloy → Loki, подключение метрик через ServiceMonitor,
+проектные PrometheusRule и опциональная доставка через AlertmanagerConfig.
+Он описывает разделение платформенных и проектных каналов, настройку бота,
+проверку доставки и работу проекта без конфига уведомлений.
+Отдельных MCP-инструментов запросов к Loki, Prometheus и Alertmanager пока нет.
+
 ## Установка
 
 ### Шаг 1. Доступ к реестру пакетов
